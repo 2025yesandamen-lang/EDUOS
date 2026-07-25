@@ -828,7 +828,29 @@
       "status": "Active"
     }
   ],
-  "payslips": [],
+  "payslips": [
+    {
+      "id": "PAY-661242-0",
+      "staffId": "staff-1",
+      "payPeriod": "July 2026",
+      "netPay": 193000,
+      "createdAt": "2026-07-22T16:27:41.243Z"
+    },
+    {
+      "id": "PAY-661243-1",
+      "staffId": "staff-2",
+      "payPeriod": "July 2026",
+      "netPay": 175000,
+      "createdAt": "2026-07-22T16:27:41.243Z"
+    },
+    {
+      "id": "PAY-661243-2",
+      "staffId": "staff-3",
+      "payPeriod": "July 2026",
+      "netPay": 157000,
+      "createdAt": "2026-07-22T16:27:41.243Z"
+    }
+  ],
   "newglobeTeacherGuides": [
     {
       "id": "ng-g-1",
