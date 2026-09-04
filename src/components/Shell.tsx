@@ -19,7 +19,9 @@ import {
   Mail,
   HardDrive,
   CreditCard,
-  Layers
+  Layers,
+  ClipboardCheck,
+  BarChart3
 } from "lucide-react";
 import { UserRole } from "../types";
 import ReportExportModal from "./ReportExportModal";
@@ -67,6 +69,10 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
         { id: "classes", label: "Classes & Rooms", icon: School },
         { id: "timetable", label: "Timetable Engine", icon: Calendar },
         { id: "parents", label: "Parent Accounts", icon: Sliders },
+        { id: "academic-foundation", label: "Academic Foundation", icon: BookOpen },
+        { id: "gradebook", label: "Gradebook & Approvals", icon: Award },
+        { id: "continuous-assessment", label: "Continuous Assessment", icon: ClipboardCheck },
+        { id: "results", label: "Results & GPA", icon: BarChart3 },
         { id: "exams", label: "Exams Portal", icon: Award },
         { id: "billing", label: "Fees & ERP Billing", icon: CreditCard },
         { id: "lesson-notes-review", label: "Lesson Plans Review", icon: FileText },
@@ -96,6 +102,8 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
       return [
         ...common,
         { id: "exams", label: "Assessment Cloud", icon: Award },
+        { id: "continuous-assessment", label: "Continuous Assessment", icon: ClipboardCheck },
+        { id: "results", label: "Results & GPA", icon: BarChart3 },
         { id: "attendance", label: "ERP Attendance Logs", icon: UserCheck },
         { id: "students", label: "Class Roster", icon: Users },
         { id: "timetable", label: "Schedules", icon: Calendar },
@@ -114,6 +122,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
         { id: "student-timetable", label: "Class Timetable", icon: Calendar },
         { id: "ogunlearn", label: "Study & Revision Center", icon: Sparkles },
         { id: "fees-payment", label: "School Fees Billing", icon: CreditCard },
+        { id: "results", label: "My Results & GPA", icon: BarChart3 },
       ];
     }
 

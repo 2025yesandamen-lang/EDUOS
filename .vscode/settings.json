@@ -1,0 +1,9 @@
+{
+  "mssql.intelliSense.enableErrorChecking": false,
+  "[sql]": {
+    "mssql.intelliSense.enableErrorChecking": false
+  },
+  "files.associations": {
+    "migrations/*.sql": "plaintext"
+  }
+}

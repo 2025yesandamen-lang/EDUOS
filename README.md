@@ -18,3 +18,11 @@ View your app in AI Studio: https://ai.studio/apps/afe40b36-be01-4c9e-af9a-08edf
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Operations
+
+- Check process and database readiness with `GET /health/ready`.
+- Apply tracked PostgreSQL migrations with `npm run migrate` from a deployment environment that can reach `DATABASE_URL`.
+- Run backend smoke and regression tests with `npm test`.
+- Run headless Chromium UI smoke tests with `npm run test:ui`.
+- Review the endpoint, authentication, and tenant-isolation contract in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).

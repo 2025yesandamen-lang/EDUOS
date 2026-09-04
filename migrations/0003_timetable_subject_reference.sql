@@ -1,0 +1,1 @@
+ALTER TABLE timetable ADD subject_id TEXT;

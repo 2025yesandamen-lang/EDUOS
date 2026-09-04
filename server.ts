@@ -67,17 +67,73 @@ import {
   dbUpdateTenant,
   dbDeleteTenant,
   dbUpdateUser,
-  dbDeleteUser
+  dbDeleteUser,
+  dbGetAcademicTerms,
+  dbGetAcademicTermById,
+  dbGetCurrentAcademicTerm,
+  dbAddAcademicTerm,
+  dbUpdateAcademicTerm,
+  dbGetSubjects,
+  dbGetSubjectById,
+  dbGetSubjectsByStream,
+  dbAddSubject,
+  dbUpdateSubject,
+  dbGetGrades,
+  dbGetGradeById,
+  dbGetStudentGrades,
+  dbGetStudentGPA,
+  dbAddGrade,
+  dbUpdateGrade,
+  dbGetAssessments,
+  dbGetAssessmentById,
+  dbGetAssessmentsByClass,
+  dbAddAssessment,
+  dbUpdateAssessment,
+  dbGetPromotions,
+  dbGetPromotionById,
+  dbGetStudentPromotion,
+  dbGetPendingPromotions,
+  dbAddPromotion,
+  dbUpdatePromotion
 } from "./src/db/dbProvider.js";
+import { getDatabaseHealth } from "./src/db/dbProvider.js";
+import { calculateGrade, defaultGradingScheme } from "./src/utils/grading.js";
+import { calculateClassResults, calculateStudentResult } from "./src/utils/results.js";
 
 // Load environment variables
+dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const START_PORT = Number(process.env.PORT) || 3000;
+const MAX_PORT_SCAN = 20;
+const startupStartedAt = Date.now();
 
 app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
+
+app.get("/health", (_req, res) => {
+  const database = getDatabaseHealth();
+  res.json({
+    status: "ok",
+    database: database.state,
+    databaseReady: database.ready,
+    uptimeSeconds: Math.floor(process.uptime()),
+    startupMilliseconds: Date.now() - startupStartedAt
+  });
+});
+
+app.get("/health/ready", (_req, res) => {
+  const database = getDatabaseHealth();
+  const ready = database.ready && (!database.configured || database.state === "postgresql");
+  res.status(ready ? 200 : 503).json({
+    status: ready ? "ready" : "not-ready",
+    database: database.state,
+    databaseReady: database.ready,
+    databaseConfigured: database.configured,
+    error: database.configured && database.state !== "postgresql" ? database.error : null
+  });
+});
 
 // Global Tenant Context Middleware using AsyncLocalStorage
 app.use((req: any, res: any, next: any) => {
@@ -155,6 +211,9 @@ app.use((req: any, res: any, next: any) => {
 
 // JWT Secret Key configuration
 const JWT_SECRET = process.env.JWT_SECRET || "cbt_pro_x_super_secret_key_2026";
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is required in production");
+}
 
 // JWT Authentication Middleware
 interface DecodedToken {
@@ -233,6 +292,31 @@ if (process.env.GEMINI_API_KEY) {
 // ----------------------------------------------------
 
 // 1. AUTH ROUTES
+async function getAuthenticatedUserPayload(user: any) {
+  const role = String(user.role || "").toUpperCase();
+  const payload: any = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role,
+    tenantId: user.tenantId
+  };
+
+  if (role === "STUDENT") {
+    const student = (await dbGetStudentByUserId(user.id)) ||
+      (await dbGetStudents()).find((item: any) => item.email?.toLowerCase() === user.email?.toLowerCase());
+    if (student) {
+      payload.studentId = student.id;
+      payload.classId = student.classId;
+    }
+  } else if (user.role === "PARENT") {
+    const parent = await dbGetParentByUserId(user.id);
+    if (parent) payload.childStudentId = parent.childStudentId;
+  }
+
+  return payload;
+}
+
 app.post("/api/auth/login", async (req, res) => {
   const { email, password, tenantId } = req.body;
   if (!email || !password) {
@@ -305,12 +389,8 @@ app.post("/api/auth/login", async (req, res) => {
       isActive: true,
       createdAt: new Date().toISOString()
     });
-  } else {
-    // If user exists, but password doesn't match, update their password to the newly provided password
-    // to ensure "every login and password work" seamlessly!
-    if (user.password !== password) {
-      user = await dbUpdateUser(user.id, user.name, password, user.role, user.tenantId);
-    }
+  } else if (user.password !== password) {
+    return res.status(401).json({ error: true, message: "Invalid email or password" });
   }
 
   let finalUser = user;
@@ -347,13 +427,7 @@ app.post("/api/auth/login", async (req, res) => {
 
   res.json({
     token,
-    user: {
-      id: finalUser.id,
-      email: finalUser.email,
-      name: finalUser.name,
-      role: finalUser.role,
-      tenantId: finalUser.tenantId
-    }
+    user: await getAuthenticatedUserPayload(finalUser)
   });
 });
 
@@ -419,7 +493,7 @@ app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
   if (!user) {
     return res.status(404).json({ error: true, message: "User not found" });
   }
-  res.json({ user });
+  res.json({ user: await getAuthenticatedUserPayload(user) });
 });
 
 // USER MANAGEMENT & PASSWORD RESET ROUTES
@@ -1400,7 +1474,15 @@ app.post("/api/exams/:id/generate-ai", authenticateToken, async (req: any, res) 
 
 // Exam Taking lifecycle
 app.post("/api/exams/:id/start", authenticateToken, async (req: any, res) => {
-  const { studentId } = req.body;
+  let { studentId } = req.body || {};
+  if (req.user.role === "STUDENT") {
+    const linkedStudent = await dbGetStudentByUserId(req.user.id);
+    if (!linkedStudent) return res.status(400).json({ error: true, message: "No SIS student profile is linked to this account" });
+    if (studentId && studentId !== linkedStudent.id) {
+      return res.status(403).json({ error: true, message: "You can only start an exam for your own student profile" });
+    }
+    studentId = linkedStudent.id;
+  }
   if (!studentId) return res.status(400).json({ error: true, message: "studentId is required to start an exam" });
   
   // Check if active attempt already exists
@@ -1783,6 +1865,55 @@ app.get("/api/students/:id", authenticateToken, async (req: any, res) => {
     examAttempts: scores,
     behavior
   });
+});
+
+app.get("/api/reports/student/:id", authenticateToken, async (req: any, res) => {
+  const studentId = req.params.id;
+  if (req.user.role === "STUDENT") {
+    const linked = await dbGetStudentByUserId(req.user.id);
+    if (!linked || linked.id !== studentId) return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
+  } else if (req.user.role === "PARENT") {
+    const parent = await dbGetParentByUserId(req.user.id);
+    if (!parent || parent.childStudentId !== studentId) return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
+  }
+
+  try {
+    const student = await dbGetStudentById(studentId);
+    if (!student) return res.status(404).json({ error: true, message: "Student not found" });
+    const [classes, subjects, terms, grades, tenants, attendanceHistory] = await Promise.all([
+      dbGetClasses(), dbGetSubjects(), dbGetAcademicTerms(), dbGetGrades(), dbGetTenants(), dbGetAttendanceForStudent(studentId)
+    ]);
+    const school = tenants.find((tenant: any) => tenant.id === (student.tenantId || req.user.tenantId)) || tenants.find((tenant: any) => tenant.id === "default") || null;
+    const classRecord = classes.find((item: any) => item.id === student.classId) || null;
+    const studentGrades = grades.filter((grade: any) => grade.studentId === studentId);
+    const requestedTermId = typeof req.query.termId === "string" ? req.query.termId : undefined;
+    const currentTermId = requestedTermId || terms.find((term: any) => term.status === "ACTIVE")?.id;
+    const currentGrades = studentGrades.filter((grade: any) => !currentTermId || grade.termId === currentTermId);
+    const currentResult = calculateStudentResult(currentGrades, subjects);
+    const classStudents = (await dbGetStudents()).filter((item: any) => item.classId === student.classId);
+    const classGrades = grades.filter((grade: any) => grade.classId === student.classId && (!currentTermId || grade.termId === currentTermId));
+    const position = calculateClassResults(classGrades, classStudents.map((item: any) => item.id), subjects).find((item: any) => item.studentId === studentId)?.position || null;
+    const transcript = terms.map((term: any) => ({
+      termId: term.id,
+      academicYear: term.academicYear,
+      termName: term.termName,
+      ...calculateStudentResult(studentGrades.filter((grade: any) => grade.termId === term.id), subjects)
+    })).filter((term: any) => term.subjectCount > 0);
+    const remarks = currentResult.subjects.map((grade: any) => grade.remarks).filter(Boolean);
+    res.json({
+      ...student,
+      school,
+      className: classRecord?.name || "Unassigned",
+      classRecord,
+      attendanceHistory,
+      attendanceRate: student.attendanceRate ?? (attendanceHistory.length ? Math.round(attendanceHistory.filter((item: any) => item.status === "PRESENT").length / attendanceHistory.length * 100) : 100),
+      reportCard: { academicYear: terms.find((term: any) => term.id === currentTermId)?.academicYear || classRecord?.academicYear || "", term: terms.find((term: any) => term.id === currentTermId) || null, subjects: currentResult.subjects, gpa: currentResult.gpa, average: currentResult.totalScore, pass: currentResult.pass, standing: currentResult.standing, position, teacherRemarks: remarks.join(" ") || "No teacher remarks recorded.", principalRemarks: school?.principalRemarks || "" },
+      transcript,
+      examAttempts: []
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message || "Failed to build academic report" });
+  }
 });
 
 app.post("/api/students", authenticateToken, async (req: any, res) => {
@@ -2259,15 +2390,25 @@ app.post("/api/classes", authenticateToken, async (req: any, res) => {
     return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
   }
 
-  const { name, room, primaryTeacher } = req.body;
+  const { name, room, primaryTeacher, academicYear, level, stream, isActive } = req.body;
   if (!name) return res.status(400).json({ error: true, message: "Class name is required" });
+  if (level && !["JS1", "JS2", "JS3", "SS1", "SS2", "SS3", "OTHER"].includes(level)) {
+    return res.status(400).json({ error: true, message: "Invalid class level" });
+  }
+  if (stream !== undefined && !String(stream).trim()) {
+    return res.status(400).json({ error: true, message: "Class stream cannot be empty" });
+  }
   
   const allClasses = await dbGetClasses();
   const newClass = {
     id: `c-${allClasses.length + 1}-${Math.random().toString(36).substring(2, 7)}`,
     name,
     room: room || "Block A",
-    primaryTeacher: primaryTeacher || "Unassigned"
+    primaryTeacher: primaryTeacher || "Unassigned",
+    academicYear: academicYear || "2025/2026",
+    level: level || "OTHER",
+    stream: stream || "General",
+    isActive: isActive !== false
   };
   await dbAddClass(newClass);
   res.status(201).json(newClass);
@@ -2297,8 +2438,8 @@ app.post("/api/timetable", authenticateToken, async (req: any, res) => {
     return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
   }
 
-  const { classId, subject, dayOfWeek, startTime, endTime, teacher, room } = req.body;
-  if (!classId || !subject || !dayOfWeek || !startTime || !endTime || !teacher || !room) {
+  const { classId, subjectId, subject, dayOfWeek, startTime, endTime, teacher, room } = req.body;
+  if (!classId || (!subjectId && !subject) || !dayOfWeek || !startTime || !endTime || !teacher || !room) {
     return res.status(400).json({ error: true, message: "Please fill out all schedule parameters" });
   }
 
@@ -2362,7 +2503,8 @@ app.post("/api/timetable", authenticateToken, async (req: any, res) => {
   const newEntry = {
     id: `t-${allTimetable.length + 1}-${Math.random().toString(36).substring(2, 7)}`,
     classId,
-    subject,
+    subjectId: subjectId || null,
+    subject: subject || "",
     dayOfWeek,
     startTime,
     endTime,
@@ -2877,6 +3019,592 @@ app.post("/api/lesson-notes/:id/review", authenticateToken, async (req: any, res
     });
     if (!updated) {
       return res.status(404).json({ error: true, message: "Lesson note not found" });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+// ============= PHASE 1: ACADEMIC OPERATIONS API =============
+
+// 12. Academic Terms API
+app.get("/api/academic-terms", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAcademicTerms } = await import("./src/db/dbProvider.js");
+    const terms = await dbGetAcademicTerms();
+    res.json(terms);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/academic-terms/current", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetCurrentAcademicTerm } = await import("./src/db/dbProvider.js");
+    const currentTerm = await dbGetCurrentAcademicTerm();
+    if (!currentTerm) {
+      return res.status(404).json({ error: true, message: "No active academic term found" });
+    }
+    res.json(currentTerm);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/academic-terms/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAcademicTermById } = await import("./src/db/dbProvider.js");
+    const term = await dbGetAcademicTermById(req.params.id);
+    if (!term) {
+      return res.status(404).json({ error: true, message: "Academic term not found" });
+    }
+    res.json(term);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/academic-terms", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can create academic terms" });
+    }
+    const { academicYear, termName, termNumber, startDate, endDate, resultPublishDate, promotionDate } = req.body;
+    if (!academicYear || !termName || !termNumber || !startDate || !endDate) {
+      return res.status(400).json({ error: true, message: "Missing required fields" });
+    }
+    if (!["FIRST", "SECOND", "THIRD"].includes(termName) || ![1, 2, 3].includes(Number(termNumber))) {
+      return res.status(400).json({ error: true, message: "Invalid academic term or term number" });
+    }
+    const { dbAddAcademicTerm } = await import("./src/db/dbProvider.js");
+    const newTerm = await dbAddAcademicTerm({
+      id: `term-${Date.now()}`,
+      academicYear,
+      termName,
+      termNumber,
+      startDate,
+      endDate,
+      resultPublishDate: resultPublishDate || null,
+      promotionDate: promotionDate || null,
+      status: "PLANNED",
+      createdBy: req.user.id,
+      createdAt: new Date().toISOString()
+    });
+    res.status(201).json(newTerm);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/academic-terms/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can update academic terms" });
+    }
+    const { dbUpdateAcademicTerm } = await import("./src/db/dbProvider.js");
+    const current = await (await import("./src/db/dbProvider.js")).dbGetAcademicTermById(req.params.id);
+    if (current?.status === "CLOSED") {
+      return res.status(409).json({ error: true, message: "Closed academic terms are locked" });
+    }
+    if (req.body.status && !["PLANNED", "ACTIVE", "ENDED", "CLOSED"].includes(req.body.status)) {
+      return res.status(400).json({ error: true, message: "Invalid academic term status" });
+    }
+    const updates = req.body.status === "CLOSED"
+      ? { ...req.body, closedAt: new Date().toISOString() }
+      : req.body;
+    const updated = await dbUpdateAcademicTerm(req.params.id, updates);
+    if (!updated) {
+      return res.status(404).json({ error: true, message: "Academic term not found" });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+// 13. Subjects API
+app.get("/api/subjects", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetSubjects } = await import("./src/db/dbProvider.js");
+    const subjects = await dbGetSubjects();
+    res.json(subjects);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/subjects/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetSubjectById } = await import("./src/db/dbProvider.js");
+    const subject = await dbGetSubjectById(req.params.id);
+    if (!subject) {
+      return res.status(404).json({ error: true, message: "Subject not found" });
+    }
+    res.json(subject);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/subjects/stream/:stream", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetSubjectsByStream } = await import("./src/db/dbProvider.js");
+    const subjects = await dbGetSubjectsByStream(req.params.stream);
+    res.json(subjects);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/subjects", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can create subjects" });
+    }
+    const { name, code, credits, isRequired, stream, subjectType, department, subjectTeacher, assignedClassIds, academicYear, termName, isActive } = req.body;
+    if (!name || !code) {
+      return res.status(400).json({ error: true, message: "Missing required fields" });
+    }
+    if (termName && !["FIRST", "SECOND", "THIRD"].includes(termName)) {
+      return res.status(400).json({ error: true, message: "Invalid subject term" });
+    }
+    if (assignedClassIds !== undefined && !Array.isArray(assignedClassIds)) {
+      return res.status(400).json({ error: true, message: "assignedClassIds must be an array" });
+    }
+    const { dbAddSubject } = await import("./src/db/dbProvider.js");
+    const newSubject = await dbAddSubject({
+      id: `subject-${Date.now()}`,
+      name,
+      code,
+      credits: credits || 3,
+      isRequired: isRequired !== false,
+      stream,
+      department: department || null,
+      subjectTeacher: subjectTeacher || null,
+      assignedClassIds: Array.isArray(assignedClassIds) ? assignedClassIds : [],
+      academicYear: academicYear || "2025/2026",
+      termName: termName || null,
+      isActive: isActive !== false,
+      subjectType: subjectType || "CORE",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    res.status(201).json(newSubject);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/subjects/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can update subjects" });
+    }
+    const { dbUpdateSubject } = await import("./src/db/dbProvider.js");
+    const updated = await dbUpdateSubject(req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ error: true, message: "Subject not found" });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+// 14. Grades API
+app.get("/api/grades", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetGrades } = await import("./src/db/dbProvider.js");
+    const grades = await dbGetGrades();
+    res.json(grades);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/grades/student/:studentId", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetStudentGrades } = await import("./src/db/dbProvider.js");
+    const { termId } = req.query;
+    const grades = await dbGetStudentGrades(req.params.studentId, termId as string);
+    res.json(grades);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/gpa/student/:studentId", authenticateToken, async (req: any, res) => {
+  try {
+    const termId = typeof req.query.termId === "string" ? req.query.termId : undefined;
+    const grades = (await dbGetGrades()).filter((grade: any) => grade.studentId === req.params.studentId && (!termId || grade.termId === termId));
+    const result = calculateStudentResult(grades, await dbGetSubjects());
+    res.json({ studentId: req.params.studentId, gpa: result.gpa, termId: termId || null, standing: result.standing });
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/results/student/:studentId", authenticateToken, async (req: any, res) => {
+  try {
+    const studentId = req.params.studentId;
+    if (req.user.role === "STUDENT" && req.user.id !== studentId) return res.status(403).json({ error: true, message: "Students can only view their own result" });
+    const termId = typeof req.query.termId === "string" ? req.query.termId : undefined;
+    const grades = (await dbGetGrades()).filter((grade: any) => grade.studentId === studentId && (!termId || grade.termId === termId));
+    const result = calculateStudentResult(grades, await dbGetSubjects());
+    res.json({ studentId, termId: termId || null, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/results/class/:classId", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "ADMIN" && req.user.role !== "TEACHER") return res.status(403).json({ error: true, message: "Only staff can view class rankings" });
+    const termId = typeof req.query.termId === "string" ? req.query.termId : undefined;
+    const students = (await dbGetStudents()).filter((student: any) => student.classId === req.params.classId);
+    const grades = (await dbGetGrades()).filter((grade: any) => grade.classId === req.params.classId && (!termId || grade.termId === termId));
+    const results = calculateClassResults(grades, students.map((student: any) => student.id), await dbGetSubjects());
+    res.json({ classId: req.params.classId, termId: termId || null, results });
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/grading-schemes", authenticateToken, async (_req: any, res) => {
+  try {
+    const { dbGetGradingSchemes } = await import("./src/db/dbProvider.js");
+    res.json(await dbGetGradingSchemes());
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/grading-schemes", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "ADMIN") return res.status(403).json({ error: true, message: "Only administrators can manage grading schemes" });
+    const { name, academicYear, caWeight, examWeight, projectWeight, assignmentWeight, bands } = req.body;
+    if (!name || !academicYear || !Array.isArray(bands)) return res.status(400).json({ error: true, message: "Missing grading scheme fields" });
+    const scheme = { caWeight: Number(caWeight || 0), examWeight: Number(examWeight || 0), projectWeight: Number(projectWeight || 0), assignmentWeight: Number(assignmentWeight || 0), bands };
+    calculateGrade({}, scheme);
+    const { dbAddGradingScheme } = await import("./src/db/dbProvider.js");
+    res.status(201).json(await dbAddGradingScheme({ id: `scheme-${Date.now()}`, name, academicYear, ...scheme, isActive: true }));
+  } catch (err: any) {
+    res.status(400).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/grades", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "TEACHER" && role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only teachers and administrators can enter grades" });
+    }
+    const { studentId, subjectId, termId, classId, academicYear, continuousAssessmentScore, examScore, projectScore, assignmentScore, remarks, schemeId, gradingScheme } = req.body;
+    if (!studentId || !subjectId || !termId || !classId) {
+      return res.status(400).json({ error: true, message: "Missing required fields" });
+    }
+    
+    let scheme = gradingScheme || null;
+    if (schemeId) {
+      const { dbGetGradingSchemes } = await import("./src/db/dbProvider.js");
+      scheme = (await dbGetGradingSchemes()).find((item: any) => item.id === schemeId);
+    }
+    if (!scheme) scheme = defaultGradingScheme;
+    const calculated = calculateGrade({ ca: Number(continuousAssessmentScore || 0), exam: Number(examScore || 0), project: Number(projectScore || 0), assignment: Number(assignmentScore || 0) }, scheme);
+
+    const { dbAddGrade } = await import("./src/db/dbProvider.js");
+    const newGrade = await dbAddGrade({
+      id: `grade-${Date.now()}`,
+      studentId,
+      subjectId,
+      termId,
+      classId,
+      academicYear: academicYear || "2025/2026",
+      continuousAssessmentScore: Number(continuousAssessmentScore || 0),
+      examScore: Number(examScore || 0),
+      projectScore: Number(projectScore || 0),
+      assignmentScore: Number(assignmentScore || 0),
+      ...calculated,
+      remarks: remarks || null,
+      approvalStatus: "DRAFT",
+      enteredBy: req.user.id,
+      enteredAt: new Date().toISOString()
+    });
+    res.status(201).json(newGrade);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/grades/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "TEACHER" && role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only teachers and administrators can update grades" });
+    }
+    const { dbUpdateGrade } = await import("./src/db/dbProvider.js");
+    const { dbGetGradeById } = await import("./src/db/dbProvider.js");
+    const current = await dbGetGradeById(req.params.id);
+    if (!current) return res.status(404).json({ error: true, message: "Grade not found" });
+    if (current.approvalStatus === "APPROVED" && req.user.role !== "ADMIN") {
+      return res.status(409).json({ error: true, message: "Approved grades are locked" });
+    }
+    if (req.body.approvalStatus && !["DRAFT", "SUBMITTED", "REJECTED"].includes(req.body.approvalStatus) && req.body.approvalStatus !== "APPROVED") {
+      return res.status(400).json({ error: true, message: "Invalid grade approval status" });
+    }
+    const updated = await dbUpdateGrade(req.params.id, req.body);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/grades/:id/approve", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "ADMIN") return res.status(403).json({ error: true, message: "Only administrators can approve grades" });
+    const { dbGetGradeById, dbUpdateGrade } = await import("./src/db/dbProvider.js");
+    const current = await dbGetGradeById(req.params.id);
+    if (!current) return res.status(404).json({ error: true, message: "Grade not found" });
+    const approvalStatus = req.body.approvalStatus || "APPROVED";
+    if (!["APPROVED", "REJECTED"].includes(approvalStatus)) return res.status(400).json({ error: true, message: "Approval status must be APPROVED or REJECTED" });
+    res.json(await dbUpdateGrade(req.params.id, { approvalStatus, approvedBy: req.user.id, approvedAt: new Date().toISOString() }));
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+// 15. Assessments API
+app.get("/api/assessments", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAssessments } = await import("./src/db/dbProvider.js");
+    const assessments = await dbGetAssessments();
+    res.json(assessments);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/assessments/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAssessmentById } = await import("./src/db/dbProvider.js");
+    const assessment = await dbGetAssessmentById(req.params.id);
+    if (!assessment) {
+      return res.status(404).json({ error: true, message: "Assessment not found" });
+    }
+    res.json(assessment);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/assessments/class/:classId", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAssessmentsByClass } = await import("./src/db/dbProvider.js");
+    const { termId } = req.query;
+    const assessments = await dbGetAssessmentsByClass(req.params.classId, termId as string);
+    res.json(assessments);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/assessments", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "TEACHER" && role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only teachers and administrators can create assessments" });
+    }
+    const { termId, classId, subjectId, title, assessmentType, totalMarks, weightInTotal, setDate, dueDate } = req.body;
+    if (!termId || !classId || !subjectId || !title || !assessmentType || !totalMarks || !weightInTotal || !setDate || !dueDate) {
+      return res.status(400).json({ error: true, message: "Missing required fields" });
+    }
+    if (!["TEST", "QUIZ", "ASSIGNMENT", "PROJECT", "PRACTICAL", "PRESENTATION", "PARTICIPATION"].includes(assessmentType)) {
+      return res.status(400).json({ error: true, message: "Invalid assessment category" });
+    }
+    if (Number(totalMarks) <= 0 || Number(weightInTotal) <= 0 || Number(weightInTotal) > 1) {
+      return res.status(400).json({ error: true, message: "Assessment marks and weight must be positive; weight cannot exceed 100%" });
+    }
+    const { dbGetAcademicTermById } = await import("./src/db/dbProvider.js");
+    const term = await dbGetAcademicTermById(termId);
+    if (!term) return res.status(400).json({ error: true, message: "Academic term not found" });
+    if (term.status === "CLOSED") return res.status(409).json({ error: true, message: "Closed academic terms are locked" });
+    const { dbAddAssessment } = await import("./src/db/dbProvider.js");
+    const newAssessment = await dbAddAssessment({
+      id: `assess-${Date.now()}`,
+      termId,
+      classId,
+      subjectId,
+      title,
+      assessmentType,
+      totalMarks,
+      weightInTotal,
+      setDate,
+      dueDate,
+      status: "DRAFT",
+      createdBy: req.user.id
+    });
+    res.status(201).json(newAssessment);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/assessments/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "TEACHER" && role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only teachers and administrators can update assessments" });
+    }
+    const { dbUpdateAssessment } = await import("./src/db/dbProvider.js");
+    const { dbGetAssessmentById, dbGetAcademicTermById } = await import("./src/db/dbProvider.js");
+    const current = await dbGetAssessmentById(req.params.id);
+    if (!current) return res.status(404).json({ error: true, message: "Assessment not found" });
+    if (current.status === "CLOSED" && role !== "ADMIN") return res.status(409).json({ error: true, message: "Closed assessments are locked" });
+    const term = await dbGetAcademicTermById(current.termId);
+    if (term?.status === "CLOSED") return res.status(409).json({ error: true, message: "Closed academic terms are locked" });
+    const updated = await dbUpdateAssessment(req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ error: true, message: "Assessment not found" });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/assessment-scores", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetAssessmentScores } = await import("./src/db/dbProvider.js");
+    res.json(await dbGetAssessmentScores(typeof req.query.assessmentId === "string" ? req.query.assessmentId : undefined));
+  } catch (err: any) { res.status(500).json({ error: true, message: err.message }); }
+});
+
+app.post("/api/assessment-scores", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "TEACHER" && req.user.role !== "ADMIN") return res.status(403).json({ error: true, message: "Only teachers and administrators can enter assessment scores" });
+    const { assessmentId, studentId, score, feedback } = req.body;
+    if (!assessmentId || !studentId || score === undefined) return res.status(400).json({ error: true, message: "Missing assessment score fields" });
+    const { dbGetAssessmentById, dbGetAcademicTermById, dbAddAssessmentScore } = await import("./src/db/dbProvider.js");
+    const assessment = await dbGetAssessmentById(assessmentId);
+    if (!assessment) return res.status(404).json({ error: true, message: "Assessment not found" });
+    if (assessment.status === "CLOSED") return res.status(409).json({ error: true, message: "Closed assessments are locked" });
+    const term = await dbGetAcademicTermById(assessment.termId);
+    if (term?.status === "CLOSED") return res.status(409).json({ error: true, message: "Closed academic terms are locked" });
+    if (!Number.isFinite(Number(score)) || Number(score) < 0 || Number(score) > Number(assessment.totalMarks)) return res.status(400).json({ error: true, message: "Score must be between 0 and the assessment total" });
+    const created = await dbAddAssessmentScore({ id: `assessment-score-${Date.now()}`, assessmentId, studentId, score: Number(score), feedback: feedback || null, approvalStatus: "DRAFT", enteredBy: req.user.id });
+    res.status(201).json(created);
+  } catch (err: any) { res.status(500).json({ error: true, message: err.message }); }
+});
+
+app.put("/api/assessment-scores/:id", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "TEACHER" && req.user.role !== "ADMIN") return res.status(403).json({ error: true, message: "Only teachers and administrators can update assessment scores" });
+    const { dbGetAssessmentScoreById, dbGetAssessmentById, dbGetAcademicTermById, dbUpdateAssessmentScore } = await import("./src/db/dbProvider.js");
+    const current = await dbGetAssessmentScoreById(req.params.id);
+    if (!current) return res.status(404).json({ error: true, message: "Assessment score not found" });
+    if (current.approvalStatus === "APPROVED" && req.user.role !== "ADMIN") return res.status(409).json({ error: true, message: "Approved assessment scores are locked" });
+    const assessment = await dbGetAssessmentById(current.assessmentId);
+    const term = assessment ? await dbGetAcademicTermById(assessment.termId) : null;
+    if (assessment?.status === "CLOSED" || term?.status === "CLOSED") return res.status(409).json({ error: true, message: "Closed assessment records are locked" });
+    if (req.body.score !== undefined && (Number(req.body.score) < 0 || Number(req.body.score) > Number(assessment?.totalMarks))) return res.status(400).json({ error: true, message: "Score must be between 0 and the assessment total" });
+    res.json(await dbUpdateAssessmentScore(req.params.id, { ...req.body, score: req.body.score === undefined ? undefined : Number(req.body.score) }));
+  } catch (err: any) { res.status(500).json({ error: true, message: err.message }); }
+});
+
+app.put("/api/assessment-scores/:id/approve", authenticateToken, async (req: any, res) => {
+  try {
+    if (req.user.role !== "ADMIN") return res.status(403).json({ error: true, message: "Only administrators can approve assessment scores" });
+    const { dbGetAssessmentScoreById, dbUpdateAssessmentScore } = await import("./src/db/dbProvider.js");
+    if (!await dbGetAssessmentScoreById(req.params.id)) return res.status(404).json({ error: true, message: "Assessment score not found" });
+    const approvalStatus = req.body.approvalStatus || "APPROVED";
+    if (!["APPROVED", "REJECTED"].includes(approvalStatus)) return res.status(400).json({ error: true, message: "Approval status must be APPROVED or REJECTED" });
+    res.json(await dbUpdateAssessmentScore(req.params.id, { approvalStatus, approvedBy: req.user.id, approvedAt: new Date().toISOString() }));
+  } catch (err: any) { res.status(500).json({ error: true, message: err.message }); }
+});
+
+// 16. Promotions API
+app.get("/api/promotions", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetPromotions } = await import("./src/db/dbProvider.js");
+    const promotions = await dbGetPromotions();
+    res.json(promotions);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/promotions/pending", authenticateToken, async (req: any, res) => {
+  try {
+    const { dbGetPendingPromotions } = await import("./src/db/dbProvider.js");
+    const promotions = await dbGetPendingPromotions();
+    res.json(promotions);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.get("/api/promotions/student/:studentId", authenticateToken, async (req: any, res) => {
+  try {
+    const { academicYear } = req.query;
+    if (!academicYear) {
+      return res.status(400).json({ error: true, message: "Missing academicYear query parameter" });
+    }
+    const { dbGetStudentPromotion } = await import("./src/db/dbProvider.js");
+    const promotion = await dbGetStudentPromotion(req.params.studentId, academicYear as string);
+    if (!promotion) {
+      return res.status(404).json({ error: true, message: "Promotion not found" });
+    }
+    res.json(promotion);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.post("/api/promotions", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can create promotions" });
+    }
+    const { studentId, currentClassId, academicYear } = req.body;
+    if (!studentId || !currentClassId || !academicYear) {
+      return res.status(400).json({ error: true, message: "Missing required fields" });
+    }
+    const { dbAddPromotion } = await import("./src/db/dbProvider.js");
+    const newPromotion = await dbAddPromotion({
+      id: `promo-${Date.now()}`,
+      studentId,
+      currentClassId,
+      academicYear,
+      promotionStatus: "PROMOTED",
+      proposedBy: req.user.id,
+      proposedDate: new Date().toISOString()
+    });
+    res.status(201).json(newPromotion);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message });
+  }
+});
+
+app.put("/api/promotions/:id/approve", authenticateToken, async (req: any, res) => {
+  try {
+    const { role } = req.user;
+    if (role !== "ADMIN") {
+      return res.status(403).json({ error: true, message: "Only administrators can approve promotions" });
+    }
+    const { dbUpdatePromotion } = await import("./src/db/dbProvider.js");
+    const updated = await dbUpdatePromotion(req.params.id, {
+      approvedBy: req.user.id,
+      approvedDate: new Date().toISOString(),
+      ...req.body
+    });
+    if (!updated) {
+      return res.status(404).json({ error: true, message: "Promotion not found" });
     }
     res.json(updated);
   } catch (err: any) {
@@ -3663,7 +4391,7 @@ app.post("/api/flexisaf/fee-payment", authenticateToken, (req: any, res) => {
 // ----------------------------------------------------
 
 // API 404 Fallback - ensures unmatched /api routes return JSON, not HTML index.html
-app.all("/api/*", (req, res) => {
+app.all("/api/{*splat}", (req, res) => {
   res.status(404).json({ error: true, message: `API endpoint not found: ${req.method} ${req.path}` });
 });
 
@@ -3677,6 +4405,8 @@ app.use((err: any, req: any, res: any, next: any) => {
 });
 
 async function startServer() {
+  const serverStartAt = Date.now();
+  console.log(`[CBT PRO X] Starting server (mode: ${process.env.NODE_ENV || "development"}, requested port: ${START_PORT})...`);
   if (process.env.NODE_ENV !== "production") {
     // Mount Vite middleware for dev mode
     const vite = await createViteServer({
@@ -3688,15 +4418,35 @@ async function startServer() {
     // Serve static files in production
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("/{*splat}", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[CBT PRO X] Server successfully initiated!`);
-    console.log(`Local Access Link: http://localhost:${PORT}`);
-  });
+  const listenOnPort = (port: number, attempt = 0) => {
+    const server = app.listen(port, "0.0.0.0", () => {
+      console.log(`[CBT PRO X] Server successfully initiated!`);
+      console.log(`Local Access Link: http://localhost:${port}`);
+      console.log(`[CBT PRO X] Startup completed in ${Date.now() - serverStartAt}ms.`);
+    });
+
+    server.on("error", (error: any) => {
+      if (error && error.code === "EADDRINUSE") {
+        if (attempt < MAX_PORT_SCAN) {
+          const nextPort = port + 1;
+          console.warn(`[CBT PRO X] Port ${port} is busy. Retrying on port ${nextPort}...`);
+          listenOnPort(nextPort, attempt + 1);
+          return;
+        }
+        console.error("[CBT PRO X] No free ports available in range. Please free an app port and retry.");
+        process.exit(1);
+      } else {
+        throw error;
+      }
+    });
+  };
+
+  listenOnPort(START_PORT);
 }
 
 startServer();

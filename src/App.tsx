@@ -40,6 +40,10 @@ import EdvesERPModule from "./components/EdvesERPModule";
 import TenantManagement from "./components/TenantManagement";
 import SchoolLandingPage from "./components/SchoolLandingPage";
 import UserManagement from "./components/UserManagement";
+import AcademicFoundation from "./components/AcademicFoundation";
+import Gradebook from "./components/Gradebook";
+import ContinuousAssessment from "./components/ContinuousAssessment";
+import ResultsSummary from "./components/ResultsSummary";
 import { User, UserRole } from "./types";
 import { motion } from "motion/react";
 import { 
@@ -164,7 +168,7 @@ function TeacherDashboardWidget({ token }: { token: string }) {
   );
 }
 
-function ParentDashboardWidget({ token }: { token: string }) {
+function ParentDashboardWidget({ token, user }: { token: string; user: any }) {
   const [childData, setChildData] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -172,7 +176,8 @@ function ParentDashboardWidget({ token }: { token: string }) {
     async function loadChild() {
       try {
         setLoading(true);
-        const res = await fetch("/api/students/s-1", {
+        if (!user?.childStudentId) return;
+        const res = await fetch(`/api/students/${user.childStudentId}`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
@@ -220,23 +225,19 @@ function ParentDashboardWidget({ token }: { token: string }) {
               Recent Assessment Grades
             </span>
             <div className="space-y-2">
-              {[
-                { subject: "Mathematics CBT Examination", score: "92/100", grade: "A+", status: "Excellent" },
-                { subject: "Physics Mock Continuous Assessment", score: "84/100", grade: "B+", status: "Very Good" },
-                { subject: "Biology Weekly Lab Experiment", score: "78/100", grade: "B", status: "Above Average" },
-                { subject: "Chemistry Periodic Table Quiz", score: "90/100", grade: "A", status: "Excellent" }
-              ].map((sub, idx) => (
-                <div key={idx} className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl flex items-center justify-between">
+              {(childData.examAttempts || []).slice(0, 4).map((attempt: any) => (
+                <div key={attempt.id} className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl flex items-center justify-between">
                   <div>
-                    <span className="font-bold text-slate-700 text-xs block">{sub.subject}</span>
-                    <span className="text-[9px] text-slate-400 font-mono">Performance: {sub.status}</span>
+                    <span className="font-bold text-slate-700 text-xs block">{attempt.examTitle}</span>
+                    <span className="text-[9px] text-slate-400 font-mono">Status: {attempt.status}</span>
                   </div>
                   <div className="text-right">
-                    <span className="text-xs font-black text-indigo-600 block font-mono">{sub.score}</span>
-                    <span className="text-[9px] font-bold text-slate-500 font-mono">Grade {sub.grade}</span>
+                    <span className="text-xs font-black text-indigo-600 block font-mono">{attempt.percentage}%</span>
+                    <span className="text-[9px] font-bold text-slate-500 font-mono">Grade {attempt.gradePoint || "-"}</span>
                   </div>
                 </div>
               ))}
+              {(!childData.examAttempts || childData.examAttempts.length === 0) && <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">No completed assessments recorded.</div>}
             </div>
           </div>
 
@@ -251,8 +252,8 @@ function ParentDashboardWidget({ token }: { token: string }) {
               </div>
               <div className="bg-emerald-50/40 border border-emerald-100 p-3 rounded-xl text-center">
                 <span className="text-[9px] font-mono font-bold text-emerald-600 uppercase tracking-wider block">Completed Homework</span>
-                <span className="text-lg font-black text-emerald-950 font-mono">14/15</span>
-                <span className="text-[9px] text-emerald-600 font-bold block mt-0.5">Top of Class</span>
+                <span className="text-lg font-black text-emerald-950 font-mono">Not tracked</span>
+                <span className="text-[9px] text-emerald-600 font-bold block mt-0.5">Awaiting assignments data</span>
               </div>
             </div>
 
@@ -261,24 +262,7 @@ function ParentDashboardWidget({ token }: { token: string }) {
               <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
                 Upcoming Assignments & Deadlines
               </span>
-              <div className="p-3 bg-white border border-slate-150 rounded-xl flex items-center justify-between hover:border-indigo-200 transition-colors">
-                <div>
-                  <span className="font-bold text-slate-700 text-xs block">Organic Chemistry Formulas Workbook</span>
-                  <span className="text-[9px] text-slate-400 font-mono">Due: Tomorrow, 11:59 PM | Subject: Chemistry</span>
-                </div>
-                <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">
-                  DUE SOON
-                </span>
-              </div>
-              <div className="p-3 bg-white border border-slate-150 rounded-xl flex items-center justify-between hover:border-indigo-200 transition-colors">
-                <div>
-                  <span className="font-bold text-slate-700 text-xs block">Wole Soyinka Prose Reading & Synopsis</span>
-                  <span className="text-[9px] text-slate-400 font-mono">Due: Fri, Oct 19 | Subject: Literature in English</span>
-                </div>
-                <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                  ONGOING
-                </span>
-              </div>
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-500">Assignment deadlines are not available in the student profile yet.</div>
             </div>
           </div>
         </div>
@@ -380,9 +364,9 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
-    const adminTabs = ["dashboard", "students", "admissions", "classes", "timetable", "parents", "exams", "billing", "lesson-notes-review", "edves-erp", "tenants", "gmail", "drive", "user-management", "ai-advisory"];
-    const teacherTabs = ["dashboard", "exams", "attendance", "students", "timetable", "lesson-notes", "edves-erp", "gmail", "drive", "user-management"];
-    const studentTabs = ["dashboard", "student-exams", "student-history", "student-timetable", "ogunlearn", "fees-payment", "user-management"];
+    const adminTabs = ["dashboard", "students", "admissions", "classes", "timetable", "parents", "academic-foundation", "gradebook", "continuous-assessment", "results", "exams", "billing", "lesson-notes-review", "edves-erp", "tenants", "gmail", "drive", "user-management", "ai-advisory"];
+    const teacherTabs = ["dashboard", "exams", "continuous-assessment", "results", "attendance", "students", "timetable", "lesson-notes", "edves-erp", "gmail", "drive", "user-management"];
+    const studentTabs = ["dashboard", "student-exams", "student-history", "student-timetable", "ogunlearn", "fees-payment", "results", "user-management"];
     const parentTabs = ["dashboard", "parent-portal", "parent-fees", "parent-chat", "user-management"];
 
     let allowed = false;
@@ -1187,7 +1171,7 @@ export default function App() {
                 <TeacherDashboardWidget token={token} />
               )}
               {user.role === "PARENT" && (
-                <ParentDashboardWidget token={token} />
+                <ParentDashboardWidget token={token} user={user} />
               )}
 
               {/* Attendance Trends Analytics Section for Admins & Teachers */}
@@ -1361,7 +1345,7 @@ export default function App() {
 
           {/* E. GUARDIAN / PARENT DASHBOARDS */}
           {user.role === "PARENT" && (activeTab === "parent-portal" || activeTab === "parent-chat") && (
-            <ParentPortal activeSection={activeTab as any} token={token} />
+            <ParentPortal activeSection={activeTab as any} token={token} user={user} />
           )}
 
           {/* F. GOOGLE WORKSPACE GMAIL HUB */}
@@ -1417,6 +1401,22 @@ export default function App() {
                 );
               }}
             />
+          )}
+
+          {user.role === "ADMIN" && activeTab === "academic-foundation" && (
+            <AcademicFoundation token={token} />
+          )}
+
+          {(user.role === "ADMIN" || user.role === "TEACHER") && activeTab === "gradebook" && (
+            <Gradebook token={token} isAdmin={user.role === "ADMIN"} />
+          )}
+
+          {(user.role === "ADMIN" || user.role === "TEACHER") && activeTab === "continuous-assessment" && (
+            <ContinuousAssessment token={token} isAdmin={user.role === "ADMIN"} />
+          )}
+
+          {(user.role === "ADMIN" || user.role === "TEACHER" || user.role === "STUDENT") && activeTab === "results" && (
+            <ResultsSummary token={token} user={user} />
           )}
 
           {/* L.2 ADMINISTRATIVE AI ADVISORY HUB */}

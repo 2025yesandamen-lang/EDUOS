@@ -18,9 +18,10 @@ import ReportExportModal from "./ReportExportModal";
 interface ParentPortalProps {
   activeSection: "parent-portal" | "parent-chat";
   token: string;
+  user: any;
 }
 
-export default function ParentPortal({ activeSection, token }: ParentPortalProps) {
+export default function ParentPortal({ activeSection, token, user }: ParentPortalProps) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showPrintReport, setShowPrintReport] = useState(false);
@@ -38,8 +39,11 @@ export default function ParentPortal({ activeSection, token }: ParentPortalProps
   const fetchChildProfile = async () => {
     try {
       setLoading(true);
-      // Fetches parent details -> and loads child s-1 profile (Tunde Folayan)
-      const res = await fetch("/api/students/s-1", {
+      if (!user?.childStudentId) {
+        setErrorMsg("No child is linked to this parent account.");
+        return;
+      }
+      const res = await fetch(`/api/students/${user.childStudentId}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
@@ -54,7 +58,7 @@ export default function ParentPortal({ activeSection, token }: ParentPortalProps
 
   useEffect(() => {
     fetchChildProfile();
-  }, []);
+  }, [token, user?.childStudentId]);
 
   useEffect(() => {
     if (chatBottomRef.current) {

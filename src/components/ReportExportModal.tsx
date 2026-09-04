@@ -126,17 +126,19 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
       try {
         setLoading(true);
         setErrorMsg(null);
-        const res = await fetch(`/api/students/${studentId}`, {
+        const res = await fetch(`/api/reports/student/${studentId}`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (res.ok) {
           const data = await res.json();
           setStudentData(data);
+          if (data.reportCard?.academicYear) setAcademicTerm(`${data.reportCard.academicYear} ${data.reportCard.term?.termName || "Term"}`);
+          if (data.reportCard?.teacherRemarks) setCustomRemarks(data.reportCard.teacherRemarks);
           
           // Pre-populate intelligent custom comments based on performance
           let initialRemarks = "";
-          if (data.examAttempts && data.examAttempts.length > 0) {
-            const avg = data.examAttempts.reduce((sum: number, att: any) => sum + att.percentage, 0) / data.examAttempts.length;
+          if (data.reportCard?.subjects?.length > 0) {
+            const avg = data.reportCard.average;
             if (avg >= 80) {
               initialRemarks = `Outstanding academic output! ${data.name} has recorded excellent aggregate CBT scores. Exemplary understanding displayed in all tested modules. Very regular attendance and complete compliance with CBT exam guidelines.`;
             } else if (avg >= 55) {
@@ -181,7 +183,11 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
   }, []);
 
   // Compute dynamic stats from attempts
-  const examAttempts = studentData?.examAttempts || [];
+  const reportSubjects = studentData?.reportCard?.subjects || [];
+  const transcriptSubjects = (studentData?.transcript || []).flatMap((term: any) => term.subjects.map((subject: any) => ({ ...subject, examTitle: `${term.academicYear} ${term.termName} - ${subject.subjectName}`, percentage: subject.totalScore, gradePoint: subject.gpaPoints, status: subject.letterGrade })));
+  const examAttempts = documentType === "transcript"
+    ? transcriptSubjects
+    : reportSubjects.map((subject: any) => ({ ...subject, examTitle: subject.subjectName, percentage: subject.totalScore, gradePoint: subject.gpaPoints, status: subject.letterGrade }));
   const attendanceRate = studentData?.attendanceRate || 100;
   const attemptsCount = examAttempts.length;
 
@@ -292,13 +298,13 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
     doc.setFont("Helvetica", "bold");
     doc.setFontSize(16);
     doc.setTextColor(30, 41, 59); // slate-800
-    doc.text("CBT PRO ACADEMY", 15, 23);
+    doc.text((studentData.school?.name || "EDUOS SCHOOL").toUpperCase(), 15, 23);
 
     doc.setFont("Helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text("Educational Operating System (EduOS) SIS Registry", 15, 27);
-    doc.text("Lagos-Ibadan Expressway Education Hub Campus Block", 15, 31);
+    doc.text(studentData.school?.address || "Official academic records office", 15, 31);
 
     // Right-aligned header metadata
     doc.setFont("Helvetica", "bold");
@@ -1283,7 +1289,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
 
                 <button
                   onClick={handleExportPDF}
-                  className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-teal-600 to-indigo-600 hover:from-teal-500 hover:to-indigo-500 text-white py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] cursor-pointer"
+                  className="w-full flex items-center justify-center space-x-2 bg-linear-to-r from-teal-600 to-indigo-600 hover:from-teal-500 hover:to-indigo-500 text-white py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] cursor-pointer"
                 >
                   <FileText className="h-4 w-4" />
                   <span>Download PDF (jsPDF)</span>
@@ -1292,7 +1298,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
                 <button
                   onClick={handleEmailReport}
                   disabled={sendingEmail}
-                  className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-red-600 to-indigo-600 hover:from-red-500 hover:to-indigo-500 disabled:opacity-50 text-white py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] cursor-pointer"
+                  className="w-full flex items-center justify-center space-x-2 bg-linear-to-r from-red-600 to-indigo-600 hover:from-red-500 hover:to-indigo-500 disabled:opacity-50 text-white py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] cursor-pointer"
                 >
                   {sendingEmail ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
@@ -1338,7 +1344,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
               {/* Target Printable Report Card Box */}
               <div 
                 id="printable-report-card" 
-                className="bg-white text-slate-800 p-8 rounded-2xl w-full max-w-[800px] shadow-xl border-4 border-slate-200 min-h-[1050px] relative font-sans flex flex-col justify-between"
+                className="bg-white text-slate-800 p-8 rounded-2xl w-full max-w-200 shadow-xl border-4 border-slate-200 min-h-262.5 relative font-sans flex flex-col justify-between"
               >
                 
                 {/* Visual Premium Certificate Header Border Decoration */}
@@ -1408,7 +1414,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
                     
                     {/* GPA Metric Card */}
                     {showGPA && (
-                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/40 border border-indigo-100/70 p-3.5 rounded-xl text-center">
+                      <div className="bg-linear-to-br from-indigo-50 to-indigo-100/40 border border-indigo-100/70 p-3.5 rounded-xl text-center">
                         <span className="text-[9px] text-indigo-600 block font-extrabold uppercase tracking-widest mb-0.5">
                           Cumulative Grade GPA
                         </span>
@@ -1423,7 +1429,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
 
                     {/* Attendance Metric Card */}
                     {showAttendance && (
-                      <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/40 border border-emerald-100/70 p-3.5 rounded-xl text-center">
+                      <div className="bg-linear-to-br from-emerald-50 to-emerald-100/40 border border-emerald-100/70 p-3.5 rounded-xl text-center">
                         <span className="text-[9px] text-emerald-600 block font-extrabold uppercase tracking-widest mb-0.5">
                           Attendance Statistics
                         </span>
@@ -1437,7 +1443,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
                     )}
 
                     {/* Exams Attempted Metric Card */}
-                    <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200/50 p-3.5 rounded-xl text-center">
+                    <div className="bg-linear-to-br from-slate-50 to-slate-100 border border-slate-200/50 p-3.5 rounded-xl text-center">
                       <span className="text-[9px] text-slate-500 block font-extrabold uppercase tracking-widest mb-0.5">
                         Completed CBT Tests
                       </span>
@@ -1625,7 +1631,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
                 <div className="border-t-2 border-indigo-900/10 pt-4 flex justify-between items-end mt-4">
                   
                   {/* Circular Gold/Indigo Stamp Area */}
-                  <div className="min-w-[120px]">
+                  <div className="min-w-30">
                     {showStamp && (
                       <div className="w-16 h-16 border-4 border-indigo-800/20 rounded-full flex flex-col items-center justify-center text-center font-mono relative select-none">
                         <div className="absolute inset-0.5 border border-dashed border-indigo-800/40 rounded-full flex flex-col items-center justify-center">
@@ -1644,7 +1650,7 @@ export default function ReportExportModal({ studentId, token, onClose }: ReportE
                   </div>
 
                   {/* Authority Signature Area */}
-                  <div className="min-w-[180px] text-right space-y-1">
+                  <div className="min-w-45 text-right space-y-1">
                     {showSignature && (
                       <div className="text-center">
                         <div className="h-9 relative flex items-center justify-center">

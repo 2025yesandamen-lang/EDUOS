@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import dns from "dns";
+import net from "net";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq, and } from "drizzle-orm";
@@ -14,14 +16,95 @@ export function getTenantId(): string {
   return tenantLocalStorage.getStore() || "default";
 }
 
+function normalizeDatabaseUrl(rawUrl?: string): string {
+  if (!rawUrl) return "";
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.password && parsed.password !== encodeURIComponent(parsed.password)) {
+      parsed.password = encodeURIComponent(parsed.password);
+      return parsed.toString();
+    }
+    return rawUrl;
+  } catch {
+    const match = rawUrl.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@(.+)$/i);
+    if (!match) return rawUrl;
+
+    const [, username, password, rest] = match;
+    return `postgresql://${username}:${encodeURIComponent(password)}@${rest}`;
+  }
+}
+
+function getDatabaseHost(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+async function canReachDatabase(rawUrl: string): Promise<boolean> {
+  const hostname = getDatabaseHost(rawUrl);
+  if (!hostname) return false;
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+
+  return await new Promise<boolean>((resolve) => {
+    const port = Number(new URL(rawUrl).port || 5432);
+    const socket = net.createConnection({ host: hostname, port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+
+    socket.setTimeout(2500, () => {
+      socket.destroy();
+      resolve(false);
+    });
+
+    socket.on("error", () => resolve(false));
+  });
+}
+
 // Database URL from environment variables
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = process.env.EDUOS_SKIP_DATABASE === "true"
+  ? ""
+  : normalizeDatabaseUrl(process.env.DATABASE_URL);
 
 export let isPostgreSQL = false;
+let databaseState: "initializing" | "postgresql" | "local-fallback" = "initializing";
+let databaseError: string | null = null;
 let db: any = null;
 
-// Initialize Drizzle if DATABASE_URL is present
-if (DATABASE_URL) {
+export function getDatabaseHealth() {
+  return {
+    configured: Boolean(DATABASE_URL),
+    state: databaseState,
+    ready: databaseState !== "initializing",
+    error: databaseError
+  };
+}
+
+async function initializeDatabase() {
+  if (!DATABASE_URL) {
+    databaseState = "local-fallback";
+    console.log("[CBT PRO X DB] No DATABASE_URL found. Running in Local Fallback mode using 'db.json' for durable preview persistence.");
+    return;
+  }
+
+  const host = getDatabaseHost(DATABASE_URL);
+  if (host && host !== "localhost" && host !== "127.0.0.1") {
+    const reachable = await canReachDatabase(DATABASE_URL);
+    if (!reachable) {
+      databaseState = "local-fallback";
+      databaseError = `Database host "${host}" is unreachable`;
+      console.warn(
+        `[CBT PRO X DB] Online PostgreSQL host "${host}" is unreachable from this environment. Keeping Local Fallback mode active for preview usage.`
+      );
+      return;
+    }
+  }
+
   try {
     const pool = new pg.Pool({
       connectionString: DATABASE_URL,
@@ -34,6 +117,8 @@ if (DATABASE_URL) {
     pool.query("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users')")
       .then(async (res) => {
         isPostgreSQL = true;
+        databaseState = "postgresql";
+        databaseError = null;
         console.log("[CBT PRO X DB] PostgreSQL connected successfully. Verifying tables and data...");
 
         try {
@@ -307,14 +392,18 @@ if (DATABASE_URL) {
       .catch((err) => {
         console.error("[CBT PRO X DB] PostgreSQL connection/verification error:", err.message);
         isPostgreSQL = false;
+        databaseState = "local-fallback";
+        databaseError = err.message;
       });
   } catch (err) {
     console.error("[CBT PRO X DB] Failed to connect to PostgreSQL. Keeping Local Fallback mode active.", err);
     isPostgreSQL = false;
+    databaseState = "local-fallback";
+    databaseError = err instanceof Error ? err.message : String(err);
   }
-} else {
-  console.log("[CBT PRO X DB] No DATABASE_URL found. Running in Local Fallback mode using 'db.json' for durable preview persistence.");
 }
+
+void initializeDatabase();
 
 // Helper to safely execute database queries with an automatic local fallback on failure and automatic tenant-isolation filtering
 async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promise<T>): Promise<T> {
@@ -363,7 +452,7 @@ async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promis
 // ----------------------------------------------------
 // LOCAL FILE BACKEND ENGINE (Synchronized File Storage)
 // ----------------------------------------------------
-const DB_FILE_PATH = path.join(process.cwd(), "db.json");
+const DB_FILE_PATH = process.env.EDUOS_DB_FILE || path.join(process.cwd(), "db.json");
 
 interface LocalDbSchema {
   users: any[];
@@ -380,6 +469,11 @@ interface LocalDbSchema {
   billingInvoices?: any[];
   billingCategories?: string[];
   tenants?: any[];
+  academicTerms?: any[];
+  subjects?: any[];
+  grades?: any[];
+  assessments?: any[];
+  promotions?: any[];
 }
 
 const INITIAL_SEED_DATA: LocalDbSchema = {
@@ -389,6 +483,7 @@ const INITIAL_SEED_DATA: LocalDbSchema = {
     { id: "u-3", email: "student@eduos.com", name: "Tunde Folayan", password: "student123", role: "STUDENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-4", email: "parent@eduos.com", name: "Chief Folayan", password: "parent123", role: "PARENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-5", email: "adebayosamuel015@gmail.com", name: "Super Admin", password: "Hibilero@2104", role: "ADMIN", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
+    { id: "u-s-4-bat0d", email: "sade@email.com", name: "Sade Ademola", password: "12345", role: "STUDENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
   ],
   classes: [
     { id: "c-1", name: "SS3 Science", room: "Block A - Room 102", primaryTeacher: "Mrs. Florence Adebayo" },
@@ -398,7 +493,8 @@ const INITIAL_SEED_DATA: LocalDbSchema = {
   students: [
     { id: "s-1", registrationNumber: "STU2026001", name: "Tunde Folayan", email: "student@eduos.com", classId: "c-1", enrollmentDate: "2026-01-10", attendanceRate: 94.5, userId: "u-3" },
     { id: "s-2", registrationNumber: "STU2026002", name: "Amina Bello", email: "amina.b@eduos.com", classId: "c-1", enrollmentDate: "2026-01-12", attendanceRate: 88.0 },
-    { id: "s-3", registrationNumber: "STU2026003", name: "Chinedu Okafor", email: "chinedu@eduos.com", classId: "c-2", enrollmentDate: "2026-01-15", attendanceRate: 100.0 }
+    { id: "s-3", registrationNumber: "STU2026003", name: "Chinedu Okafor", email: "chinedu@eduos.com", classId: "c-2", enrollmentDate: "2026-01-15", attendanceRate: 100.0 },
+    { id: "s-4-bat0d", registrationNumber: "STU20266839", name: "Sade Ademola", email: "sade@email.com", classId: "c-1", enrollmentDate: "2026-07-22", attendanceRate: 100.0, userId: "u-s-4-bat0d", tenantId: "default", tenant_id: "default", status: "Active" }
   ],
   admissions: [
     { id: "adm-1", studentName: "Sade Ademola", studentEmail: "sade@email.com", gradeApplied: "SS1 Science", parentName: "Dr. Kunle Ademola", parentEmail: "kunle@email.com", parentPhone: "+234 803 111 2222", status: "PENDING", submittedAt: "2026-07-01T10:00:00.000Z" },
@@ -1635,6 +1731,791 @@ export async function dbDeleteUser(id: string): Promise<boolean> {
         return true;
       }
       return false;
+    }
+  );
+}
+
+// ============= PHASE 1: ACADEMIC OPERATIONS =============
+
+// 12. Academic Terms Database Functions
+export async function dbGetAcademicTerms(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.academicTerms),
+    () => {
+      const local = readLocalDb();
+      return (local as any).academicTerms || [];
+    }
+  );
+}
+
+export async function dbGetAcademicTermById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.academicTerms).where(eq(schema.academicTerms.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).academicTerms || []).find((t: any) => t.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetCurrentAcademicTerm(): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.academicTerms).where(eq(schema.academicTerms.status, "ACTIVE"));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).academicTerms || []).find((t: any) => t.status === "ACTIVE") || null;
+    }
+  );
+}
+
+export async function dbAddAcademicTerm(term: any): Promise<any> {
+  term.tenantId = term.tenantId || getTenantId();
+  term.tenant_id = term.tenant_id || term.tenantId;
+  term.createdAt = term.createdAt || new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.insert(schema.academicTerms).values(term);
+      return term;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).academicTerms) (local as any).academicTerms = [];
+      (local as any).academicTerms.push(term);
+      writeLocalDb(local);
+      return term;
+    }
+  );
+}
+
+export async function dbUpdateAcademicTerm(id: string, updates: any): Promise<any> {
+  return executeQuery(
+    async () => {
+      await db.update(schema.academicTerms).set(updates).where(eq(schema.academicTerms.id, id));
+      const res = await db.select().from(schema.academicTerms).where(eq(schema.academicTerms.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).academicTerms) (local as any).academicTerms = [];
+      const idx = (local as any).academicTerms.findIndex((t: any) => t.id === id);
+      if (idx !== -1) {
+        (local as any).academicTerms[idx] = { ...(local as any).academicTerms[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).academicTerms[idx];
+      }
+      return null;
+    }
+  );
+}
+
+// 13. Subjects Database Functions
+export async function dbGetSubjects(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.subjects),
+    () => {
+      const local = readLocalDb();
+      return (local as any).subjects || [];
+    }
+  );
+}
+
+export async function dbGetSubjectById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.subjects).where(eq(schema.subjects.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).subjects || []).find((s: any) => s.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetSubjectsByStream(stream: string): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.subjects).where(eq(schema.subjects.stream, stream)),
+    () => {
+      const local = readLocalDb();
+      return ((local as any).subjects || []).filter((s: any) => s.stream === stream);
+    }
+  );
+}
+
+export async function dbAddSubject(subject: any): Promise<any> {
+  subject.tenantId = subject.tenantId || getTenantId();
+  subject.tenant_id = subject.tenant_id || subject.tenantId;
+  subject.createdAt = subject.createdAt || new Date().toISOString();
+  subject.updatedAt = subject.updatedAt || new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.insert(schema.subjects).values(subject);
+      return subject;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).subjects) (local as any).subjects = [];
+      (local as any).subjects.push(subject);
+      writeLocalDb(local);
+      return subject;
+    }
+  );
+}
+
+export async function dbUpdateSubject(id: string, updates: any): Promise<any> {
+  updates.updatedAt = new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.update(schema.subjects).set(updates).where(eq(schema.subjects.id, id));
+      const res = await db.select().from(schema.subjects).where(eq(schema.subjects.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).subjects) (local as any).subjects = [];
+      const idx = (local as any).subjects.findIndex((s: any) => s.id === id);
+      if (idx !== -1) {
+        (local as any).subjects[idx] = { ...(local as any).subjects[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).subjects[idx];
+      }
+      return null;
+    }
+  );
+}
+
+// 14. Grades Database Functions
+export async function dbGetGrades(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.grades),
+    () => {
+      const local = readLocalDb();
+      return (local as any).grades || [];
+    }
+  );
+}
+
+export async function dbGetGradeById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.grades).where(eq(schema.grades.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).grades || []).find((g: any) => g.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetStudentGrades(studentId: string, termId?: string): Promise<any[]> {
+  return executeQuery(
+    async () => {
+      if (termId) {
+        return await db.select().from(schema.grades).where(
+          and(
+            eq(schema.grades.studentId, studentId),
+            eq(schema.grades.termId, termId)
+          )
+        );
+      }
+      return await db.select().from(schema.grades).where(eq(schema.grades.studentId, studentId));
+    },
+    () => {
+      const local = readLocalDb();
+      const grades = (local as any).grades || [];
+      if (termId) {
+        return grades.filter((g: any) => g.studentId === studentId && g.termId === termId);
+      }
+      return grades.filter((g: any) => g.studentId === studentId);
+    }
+  );
+}
+
+export async function dbGetStudentGPA(studentId: string): Promise<number> {
+  return executeQuery(
+    async () => {
+      const grades = await db.select().from(schema.grades).where(eq(schema.grades.studentId, studentId));
+      if (grades.length === 0) return 0.0;
+      const sum = grades.reduce((acc: number, g: any) => acc + (g.gpaPoints || 0), 0);
+      return sum / grades.length;
+    },
+    () => {
+      const local = readLocalDb();
+      const grades = ((local as any).grades || []).filter((g: any) => g.studentId === studentId);
+      if (grades.length === 0) return 0.0;
+      const sum = grades.reduce((acc: number, g: any) => acc + (g.gpaPoints || 0), 0);
+      return sum / grades.length;
+    }
+  );
+}
+
+export async function dbAddGrade(grade: any): Promise<any> {
+  grade.tenantId = grade.tenantId || getTenantId();
+  grade.tenant_id = grade.tenant_id || grade.tenantId;
+  grade.createdAt = grade.createdAt || new Date().toISOString();
+  grade.updatedAt = grade.updatedAt || new Date().toISOString();
+  grade.enteredAt = grade.enteredAt || new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.insert(schema.grades).values(grade);
+      return grade;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).grades) (local as any).grades = [];
+      (local as any).grades.push(grade);
+      writeLocalDb(local);
+      return grade;
+    }
+  );
+}
+
+export async function dbUpdateGrade(id: string, updates: any): Promise<any> {
+  updates.updatedAt = new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.update(schema.grades).set(updates).where(eq(schema.grades.id, id));
+      const res = await db.select().from(schema.grades).where(eq(schema.grades.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).grades) (local as any).grades = [];
+      const idx = (local as any).grades.findIndex((g: any) => g.id === id);
+      if (idx !== -1) {
+        (local as any).grades[idx] = { ...(local as any).grades[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).grades[idx];
+      }
+      return null;
+    }
+  );
+}
+
+export async function dbGetGradingSchemes(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.gradingSchemes),
+    () => {
+      const local = readLocalDb();
+      return (local as any).gradingSchemes || [];
+    }
+  );
+}
+
+export async function dbAddGradingScheme(scheme: any): Promise<any> {
+  scheme.tenantId = scheme.tenantId || getTenantId();
+  scheme.createdAt = scheme.createdAt || new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.insert(schema.gradingSchemes).values(scheme);
+      return scheme;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).gradingSchemes) (local as any).gradingSchemes = [];
+      (local as any).gradingSchemes.push(scheme);
+      writeLocalDb(local);
+      return scheme;
+    }
+  );
+}
+
+// 15. Assessments Database Functions
+export async function dbGetAssessments(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.assessments),
+    () => {
+      const local = readLocalDb();
+      return (local as any).assessments || [];
+    }
+  );
+}
+
+export async function dbGetAssessmentById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.assessments).where(eq(schema.assessments.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).assessments || []).find((a: any) => a.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetAssessmentsByClass(classId: string, termId?: string): Promise<any[]> {
+  return executeQuery(
+    async () => {
+      if (termId) {
+        return await db.select().from(schema.assessments).where(
+          and(
+            eq(schema.assessments.classId, classId),
+            eq(schema.assessments.termId, termId)
+          )
+        );
+      }
+      return await db.select().from(schema.assessments).where(eq(schema.assessments.classId, classId));
+    },
+    () => {
+      const local = readLocalDb();
+      const assessments = (local as any).assessments || [];
+      if (termId) {
+        return assessments.filter((a: any) => a.classId === classId && a.termId === termId);
+      }
+      return assessments.filter((a: any) => a.classId === classId);
+    }
+  );
+}
+
+export async function dbAddAssessment(assessment: any): Promise<any> {
+  assessment.tenantId = assessment.tenantId || getTenantId();
+  assessment.tenant_id = assessment.tenant_id || assessment.tenantId;
+  assessment.createdAt = assessment.createdAt || new Date().toISOString();
+  assessment.status = assessment.status || "DRAFT";
+  return executeQuery(
+    async () => {
+      await db.insert(schema.assessments).values(assessment);
+      return assessment;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).assessments) (local as any).assessments = [];
+      (local as any).assessments.push(assessment);
+      writeLocalDb(local);
+      return assessment;
+    }
+  );
+}
+
+export async function dbUpdateAssessment(id: string, updates: any): Promise<any> {
+  return executeQuery(
+    async () => {
+      await db.update(schema.assessments).set(updates).where(eq(schema.assessments.id, id));
+      const res = await db.select().from(schema.assessments).where(eq(schema.assessments.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).assessments) (local as any).assessments = [];
+      const idx = (local as any).assessments.findIndex((a: any) => a.id === id);
+      if (idx !== -1) {
+        (local as any).assessments[idx] = { ...(local as any).assessments[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).assessments[idx];
+      }
+      return null;
+    }
+  );
+}
+
+export async function dbGetAssessmentScores(assessmentId?: string): Promise<any[]> {
+  return executeQuery(
+    async () => assessmentId
+      ? await db.select().from(schema.assessmentScores).where(eq(schema.assessmentScores.assessmentId, assessmentId))
+      : await db.select().from(schema.assessmentScores),
+    () => {
+      const scores = (readLocalDb() as any).assessmentScores || [];
+      return assessmentId ? scores.filter((score: any) => score.assessmentId === assessmentId) : scores;
+    }
+  );
+}
+
+export async function dbGetAssessmentScoreById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => (await db.select().from(schema.assessmentScores).where(eq(schema.assessmentScores.id, id)))[0] || null,
+    () => ((readLocalDb() as any).assessmentScores || []).find((score: any) => score.id === id) || null
+  );
+}
+
+export async function dbAddAssessmentScore(score: any): Promise<any> {
+  score.tenantId = score.tenantId || getTenantId();
+  score.enteredAt = score.enteredAt || new Date().toISOString();
+  score.updatedAt = score.updatedAt || new Date().toISOString();
+  return executeQuery(
+    async () => { await db.insert(schema.assessmentScores).values(score); return score; },
+    () => { const local = readLocalDb(); if (!(local as any).assessmentScores) (local as any).assessmentScores = []; (local as any).assessmentScores.push(score); writeLocalDb(local); return score; }
+  );
+}
+
+export async function dbUpdateAssessmentScore(id: string, updates: any): Promise<any> {
+  updates.updatedAt = new Date().toISOString();
+  return executeQuery(
+    async () => { await db.update(schema.assessmentScores).set(updates).where(eq(schema.assessmentScores.id, id)); return (await db.select().from(schema.assessmentScores).where(eq(schema.assessmentScores.id, id)))[0] || null; },
+    () => { const local = readLocalDb(); const scores = (local as any).assessmentScores || []; const index = scores.findIndex((score: any) => score.id === id); if (index < 0) return null; scores[index] = { ...scores[index], ...updates }; (local as any).assessmentScores = scores; writeLocalDb(local); return scores[index]; }
+  );
+}
+
+// 16. Promotions Database Functions
+export async function dbGetPromotions(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.promotions),
+    () => {
+      const local = readLocalDb();
+      return (local as any).promotions || [];
+    }
+  );
+}
+
+export async function dbGetPromotionById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.promotions).where(eq(schema.promotions.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).promotions || []).find((p: any) => p.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetStudentPromotion(studentId: string, academicYear: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.promotions).where(
+        and(
+          eq(schema.promotions.studentId, studentId),
+          eq(schema.promotions.academicYear, academicYear)
+        )
+      );
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).promotions || []).find((p: any) => p.studentId === studentId && p.academicYear === academicYear) || null;
+    }
+  );
+}
+
+export async function dbGetPendingPromotions(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.promotions).where(eq(schema.promotions.promotionStatus, "PENDING")),
+    () => {
+      const local = readLocalDb();
+      return ((local as any).promotions || []).filter((p: any) => !p.approvedBy || !p.approvedDate);
+    }
+  );
+}
+
+export async function dbAddPromotion(promotion: any): Promise<any> {
+  promotion.tenantId = promotion.tenantId || getTenantId();
+  promotion.tenant_id = promotion.tenant_id || promotion.tenantId;
+  promotion.createdAt = promotion.createdAt || new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.insert(schema.promotions).values(promotion);
+      return promotion;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).promotions) (local as any).promotions = [];
+      (local as any).promotions.push(promotion);
+      writeLocalDb(local);
+      return promotion;
+    }
+  );
+}
+
+export async function dbUpdatePromotion(id: string, updates: any): Promise<any> {
+  return executeQuery(
+    async () => {
+      await db.update(schema.promotions).set(updates).where(eq(schema.promotions.id, id));
+      const res = await db.select().from(schema.promotions).where(eq(schema.promotions.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).promotions) (local as any).promotions = [];
+      const idx = (local as any).promotions.findIndex((p: any) => p.id === id);
+      if (idx !== -1) {
+        (local as any).promotions[idx] = { ...(local as any).promotions[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).promotions[idx];
+      }
+      return null;
+    }
+  );
+}
+
+// ============= PHASE 3: CONDUCT/BEHAVIOR MANAGEMENT =============
+
+// 17. Disciplinary Records Database Functions
+export async function dbGetDisciplinaryRecords(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.disciplinaryRecords),
+    () => {
+      const local = readLocalDb();
+      return (local as any).disciplinaryRecords || [];
+    }
+  );
+}
+
+export async function dbGetDisciplinaryRecordById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.disciplinaryRecords).where(eq(schema.disciplinaryRecords.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).disciplinaryRecords || []).find((d: any) => d.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetStudentDisciplinaryRecords(studentId: string): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.disciplinaryRecords).where(eq(schema.disciplinaryRecords.studentId, studentId)),
+    () => {
+      const local = readLocalDb();
+      return ((local as any).disciplinaryRecords || []).filter((d: any) => d.studentId === studentId);
+    }
+  );
+}
+
+export async function dbGetPendingDisciplinaryRecords(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.disciplinaryRecords).where(eq(schema.disciplinaryRecords.status, "PENDING")),
+    () => {
+      const local = readLocalDb();
+      return ((local as any).disciplinaryRecords || []).filter((d: any) => d.status === "PENDING");
+    }
+  );
+}
+
+export async function dbGetDisciplinaryRecordsByStatus(status: string): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.disciplinaryRecords).where(eq(schema.disciplinaryRecords.status, status)),
+    () => {
+      const local = readLocalDb();
+      return ((local as any).disciplinaryRecords || []).filter((d: any) => d.status === status);
+    }
+  );
+}
+
+export async function dbAddDisciplinaryRecord(record: any): Promise<any> {
+  record.tenantId = record.tenantId || getTenantId();
+  record.tenant_id = record.tenant_id || record.tenantId;
+  record.createdAt = record.createdAt || new Date().toISOString();
+  record.updatedAt = record.updatedAt || new Date().toISOString();
+  record.reportedAt = record.reportedAt || new Date().toISOString();
+  record.status = record.status || "PENDING";
+  return executeQuery(
+    async () => {
+      await db.insert(schema.disciplinaryRecords).values(record);
+      return record;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).disciplinaryRecords) (local as any).disciplinaryRecords = [];
+      (local as any).disciplinaryRecords.push(record);
+      writeLocalDb(local);
+      return record;
+    }
+  );
+}
+
+export async function dbUpdateDisciplinaryRecord(id: string, updates: any): Promise<any> {
+  updates.updatedAt = new Date().toISOString();
+  return executeQuery(
+    async () => {
+      await db.update(schema.disciplinaryRecords).set(updates).where(eq(schema.disciplinaryRecords.id, id));
+      const res = await db.select().from(schema.disciplinaryRecords).where(eq(schema.disciplinaryRecords.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).disciplinaryRecords) (local as any).disciplinaryRecords = [];
+      const idx = (local as any).disciplinaryRecords.findIndex((d: any) => d.id === id);
+      if (idx !== -1) {
+        (local as any).disciplinaryRecords[idx] = { ...(local as any).disciplinaryRecords[idx], ...updates, updatedAt: new Date().toISOString() };
+        writeLocalDb(local);
+        return (local as any).disciplinaryRecords[idx];
+      }
+      return null;
+    }
+  );
+}
+
+export async function dbApproveDisciplinaryRecord(id: string, approvedBy: string, result?: string): Promise<any> {
+  return dbUpdateDisciplinaryRecord(id, {
+    status: "APPROVED",
+    approvedBy,
+    approvedAt: new Date().toISOString()
+  });
+}
+
+// ============= PHASE 4: HEALTH & MEDICAL RECORDS =============
+
+// 18. Health Records Database Functions
+export async function dbGetHealthRecords(): Promise<any[]> {
+  return executeQuery(
+    async () => await db.select().from(schema.healthRecords),
+    () => {
+      const local = readLocalDb();
+      return (local as any).healthRecords || [];
+    }
+  );
+}
+
+export async function dbGetHealthRecordById(id: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.healthRecords).where(eq(schema.healthRecords.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).healthRecords || []).find((h: any) => h.id === id) || null;
+    }
+  );
+}
+
+export async function dbGetStudentHealthRecord(studentId: string): Promise<any | null> {
+  return executeQuery(
+    async () => {
+      const res = await db.select().from(schema.healthRecords).where(eq(schema.healthRecords.studentId, studentId));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      return ((local as any).healthRecords || []).find((h: any) => h.studentId === studentId) || null;
+    }
+  );
+}
+
+export async function dbGetStudentsWithAllergies(allergyName?: string): Promise<any[]> {
+  return executeQuery(
+    async () => {
+      const records = await db.select().from(schema.healthRecords);
+      if (!allergyName) return records.filter((r: any) => r.allergies && r.allergies.length > 0);
+      return records.filter((r: any) => {
+        if (!r.allergies) return false;
+        const allergies = typeof r.allergies === 'string' ? JSON.parse(r.allergies) : r.allergies;
+        return allergies.some((a: any) => a.name?.toLowerCase().includes(allergyName.toLowerCase()));
+      });
+    },
+    () => {
+      const local = readLocalDb();
+      const records = (local as any).healthRecords || [];
+      if (!allergyName) return records.filter((r: any) => r.allergies && (Array.isArray(r.allergies) ? r.allergies.length > 0 : JSON.parse(r.allergies || '[]').length > 0));
+      return records.filter((r: any) => {
+        if (!r.allergies) return false;
+        const allergies = Array.isArray(r.allergies) ? r.allergies : JSON.parse(r.allergies || '[]');
+        return allergies.some((a: any) => a.name?.toLowerCase().includes(allergyName.toLowerCase()));
+      });
+    }
+  );
+}
+
+export async function dbGetStudentsNeedingCheckup(): Promise<any[]> {
+  return executeQuery(
+    async () => {
+      const records = await db.select().from(schema.healthRecords);
+      return records.filter((r: any) => !r.nextCheckupDate || new Date(r.nextCheckupDate) < new Date());
+    },
+    () => {
+      const local = readLocalDb();
+      const records = (local as any).healthRecords || [];
+      return records.filter((r: any) => !r.nextCheckupDate || new Date(r.nextCheckupDate) < new Date());
+    }
+  );
+}
+
+export async function dbAddHealthRecord(record: any): Promise<any> {
+  record.tenantId = record.tenantId || getTenantId();
+  record.tenant_id = record.tenant_id || record.tenantId;
+  record.createdAt = record.createdAt || new Date().toISOString();
+  record.updatedAt = record.updatedAt || new Date().toISOString();
+  
+  // Convert JSON objects to strings if needed
+  if (record.allergies && Array.isArray(record.allergies)) {
+    record.allergies = JSON.stringify(record.allergies);
+  }
+  if (record.chronicConditions && Array.isArray(record.chronicConditions)) {
+    record.chronicConditions = JSON.stringify(record.chronicConditions);
+  }
+  if (record.disabilities && Array.isArray(record.disabilities)) {
+    record.disabilities = JSON.stringify(record.disabilities);
+  }
+  if (record.vaccinations && Array.isArray(record.vaccinations)) {
+    record.vaccinations = JSON.stringify(record.vaccinations);
+  }
+  if (record.currentMedications && Array.isArray(record.currentMedications)) {
+    record.currentMedications = JSON.stringify(record.currentMedications);
+  }
+  if (record.specialNeeds && Array.isArray(record.specialNeeds)) {
+    record.specialNeeds = JSON.stringify(record.specialNeeds);
+  }
+  if (record.dietaryRestrictions && Array.isArray(record.dietaryRestrictions)) {
+    record.dietaryRestrictions = JSON.stringify(record.dietaryRestrictions);
+  }
+  
+  return executeQuery(
+    async () => {
+      await db.insert(schema.healthRecords).values(record);
+      return record;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).healthRecords) (local as any).healthRecords = [];
+      (local as any).healthRecords.push(record);
+      writeLocalDb(local);
+      return record;
+    }
+  );
+}
+
+export async function dbUpdateHealthRecord(id: string, updates: any): Promise<any> {
+  updates.updatedAt = new Date().toISOString();
+  
+  // Convert JSON objects to strings if needed
+  if (updates.allergies && Array.isArray(updates.allergies)) {
+    updates.allergies = JSON.stringify(updates.allergies);
+  }
+  if (updates.chronicConditions && Array.isArray(updates.chronicConditions)) {
+    updates.chronicConditions = JSON.stringify(updates.chronicConditions);
+  }
+  if (updates.disabilities && Array.isArray(updates.disabilities)) {
+    updates.disabilities = JSON.stringify(updates.disabilities);
+  }
+  if (updates.vaccinations && Array.isArray(updates.vaccinations)) {
+    updates.vaccinations = JSON.stringify(updates.vaccinations);
+  }
+  if (updates.currentMedications && Array.isArray(updates.currentMedications)) {
+    updates.currentMedications = JSON.stringify(updates.currentMedications);
+  }
+  if (updates.specialNeeds && Array.isArray(updates.specialNeeds)) {
+    updates.specialNeeds = JSON.stringify(updates.specialNeeds);
+  }
+  if (updates.dietaryRestrictions && Array.isArray(updates.dietaryRestrictions)) {
+    updates.dietaryRestrictions = JSON.stringify(updates.dietaryRestrictions);
+  }
+  
+  return executeQuery(
+    async () => {
+      await db.update(schema.healthRecords).set(updates).where(eq(schema.healthRecords.id, id));
+      const res = await db.select().from(schema.healthRecords).where(eq(schema.healthRecords.id, id));
+      return res[0] || null;
+    },
+    () => {
+      const local = readLocalDb();
+      if (!(local as any).healthRecords) (local as any).healthRecords = [];
+      const idx = (local as any).healthRecords.findIndex((h: any) => h.id === id);
+      if (idx !== -1) {
+        (local as any).healthRecords[idx] = { ...(local as any).healthRecords[idx], ...updates };
+        writeLocalDb(local);
+        return (local as any).healthRecords[idx];
+      }
+      return null;
     }
   );
 }
