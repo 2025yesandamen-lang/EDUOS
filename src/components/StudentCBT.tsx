@@ -246,7 +246,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   }, [activeSection]);
 
   useEffect(() => {
-    const currentExamKey = `cbt_current_exam_${studentUser?.studentId || "unknown"}`;
+    const currentExamKey = `cbt_current_exam_${studentUser?.id || studentUser?.studentId || "unknown"}`;
     const currentExamId = localStorage.getItem(currentExamKey);
     if (!currentExamId || activeExam || viewingResult) return;
 
@@ -469,7 +469,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       localStorage.setItem(`cbt_cached_exam_${examId}`, JSON.stringify(examData));
       localStorage.setItem(`cbt_active_attempt_${examId}`, JSON.stringify(startData.attempt));
       localStorage.setItem(`cbt_answers_${examId}`, JSON.stringify(startData.attempt.answers || {}));
-      localStorage.setItem(`cbt_current_exam_${studentUser.studentId}`, examId);
+      localStorage.setItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`, examId);
 
       // Compute precise remaining time based on attempt startTime (helps prevent reload/cheat time reset)
       const attemptStartTime = startData.attempt.startTime ? new Date(startData.attempt.startTime).getTime() : Date.now();
@@ -503,7 +503,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
           setSavedAnswers(cachedAnswers);
           setFlaggedQuestions(cachedFlags);
           setCurrentQIndex(0);
-          localStorage.setItem(`cbt_current_exam_${studentUser.studentId}`, examId);
+          localStorage.setItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`, examId);
 
           const attemptStartTime = cachedAttempt.startTime ? new Date(cachedAttempt.startTime).getTime() : Date.now();
           const elapsedSeconds = Math.floor((Date.now() - attemptStartTime) / 1000);
@@ -665,7 +665,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       setViewingResult(data);
       setActiveExam(null);
       setActiveAttempt(null);
-      localStorage.removeItem(`cbt_current_exam_${studentUser.studentId}`);
+      localStorage.removeItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`);
       localStorage.removeItem(`cbt_active_attempt_${examId}`);
     } catch (e) {
       console.error(e);
