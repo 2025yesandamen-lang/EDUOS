@@ -201,8 +201,9 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
 
   const loadHistory = async () => {
     if (!studentUser) return;
+    if (!studentUser.studentId) return;
     try {
-      const res = await fetch(`/api/student/s-1/attempts`, { // hardcoded s-1 fallback for student user
+      const res = await fetch(`/api/student/${studentUser.studentId}/attempts`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
@@ -218,8 +219,9 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   };
 
   const loadTimetable = async () => {
+    if (!studentUser?.classId) return;
     try {
-      const res = await fetch(`/api/timetable?classId=c-1`, { // science class fallback
+      const res = await fetch(`/api/timetable?classId=${encodeURIComponent(studentUser.classId)}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
@@ -237,13 +239,41 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   useEffect(() => {
     setErrorMsg(null);
     setViewingResult(null);
-    setActiveExam(null);
-    setActiveAttempt(null);
 
     loadExams();
     loadHistory();
     loadTimetable();
   }, [activeSection]);
+
+  useEffect(() => {
+    const currentExamKey = `cbt_current_exam_${studentUser?.studentId || "unknown"}`;
+    const currentExamId = localStorage.getItem(currentExamKey);
+    if (!currentExamId || activeExam || viewingResult) return;
+
+    try {
+      const cachedExam = JSON.parse(localStorage.getItem(`cbt_cached_exam_${currentExamId}`) || "null");
+      const cachedAttempt = JSON.parse(localStorage.getItem(`cbt_active_attempt_${currentExamId}`) || "null");
+      if (!cachedExam || !cachedAttempt || cachedAttempt.isSubmitted) {
+        localStorage.removeItem(currentExamKey);
+        return;
+      }
+
+      const cachedAnswers = JSON.parse(localStorage.getItem(`cbt_answers_${currentExamId}`) || "{}");
+      const cachedFlags = JSON.parse(localStorage.getItem(`cbt_flagged_${currentExamId}`) || "{}");
+      setActiveExam(cachedExam);
+      setExamQuestions(cachedExam.questions || []);
+      setActiveAttempt(cachedAttempt);
+      setSavedAnswers(cachedAnswers);
+      setFlaggedQuestions(cachedFlags);
+      setCurrentQIndex(0);
+
+      const attemptStartTime = cachedAttempt.startTime ? new Date(cachedAttempt.startTime).getTime() : Date.now();
+      const elapsedSeconds = Math.floor((Date.now() - attemptStartTime) / 1000);
+      setSecondsRemaining(Math.max(0, cachedExam.duration * 60 - elapsedSeconds));
+    } catch (restoreError) {
+      console.error("[CBT PRO X] Failed to restore active exam session:", restoreError);
+    }
+  }, [studentUser?.studentId, activeExam, viewingResult]);
 
   // Anti-Cheat: Tab Switch Detection
   useEffect(() => {
@@ -424,7 +454,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ studentId: "s-1" }) // mapped student ID
+        body: JSON.stringify({ studentId: studentUser.studentId })
       });
       const startData = await startRes.json();
       if (!startRes.ok) throw new Error(startData.message || "Failed to initiate exam session.");
@@ -439,6 +469,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       localStorage.setItem(`cbt_cached_exam_${examId}`, JSON.stringify(examData));
       localStorage.setItem(`cbt_active_attempt_${examId}`, JSON.stringify(startData.attempt));
       localStorage.setItem(`cbt_answers_${examId}`, JSON.stringify(startData.attempt.answers || {}));
+      localStorage.setItem(`cbt_current_exam_${studentUser.studentId}`, examId);
 
       // Compute precise remaining time based on attempt startTime (helps prevent reload/cheat time reset)
       const attemptStartTime = startData.attempt.startTime ? new Date(startData.attempt.startTime).getTime() : Date.now();
@@ -472,6 +503,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
           setSavedAnswers(cachedAnswers);
           setFlaggedQuestions(cachedFlags);
           setCurrentQIndex(0);
+          localStorage.setItem(`cbt_current_exam_${studentUser.studentId}`, examId);
 
           const attemptStartTime = cachedAttempt.startTime ? new Date(cachedAttempt.startTime).getTime() : Date.now();
           const elapsedSeconds = Math.floor((Date.now() - attemptStartTime) / 1000);
@@ -633,6 +665,8 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       setViewingResult(data);
       setActiveExam(null);
       setActiveAttempt(null);
+      localStorage.removeItem(`cbt_current_exam_${studentUser.studentId}`);
+      localStorage.removeItem(`cbt_active_attempt_${examId}`);
     } catch (e) {
       console.error(e);
     } finally {
@@ -1620,7 +1654,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       {/* ----------------- SECTION 4: HISTORIC ATTEMPT LISTS ----------------- */}
       {activeSection === "student-history" && (
         <div className="space-y-6">
-          <StudentPerformanceSummary studentId={studentUser?.id || "s-1"} token={token} studentName={studentUser?.name} />
+          <StudentPerformanceSummary studentId={studentUser?.studentId} token={token} studentName={studentUser?.name} />
 
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -1717,7 +1751,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
 
       {showPrintReport && (
         <ReportExportModal 
-          studentId="s-1" // mapped student ID for studentUser
+          studentId={studentUser?.studentId}
           token={token} 
           onClose={() => setShowPrintReport(false)} 
         />
