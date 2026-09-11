@@ -1,28 +1,16 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/afe40b36-be01-4c9e-af9a-08edf3e0fbe0
-
-## Run Locally
-
-**Prerequisites:**  Node.js
+                                          EDUOS
+                     The Complete Digital Operating System for Modern Schools
+                            A School Digital Transformation Proposal
 
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+EduOS provides an integrated environment for managing key school functions. The platform screenshots
+demonstrate dedicated workflows for student information, admissions, academic management, gradebooks,
+continuous assessment, results, fees and billing, lesson planning, administration, boarding, transport, shops
+and payroll-related processes.
+Instead of moving between many disconnected systems, authorised users can work within a central digital
+environment designed around how schools operate.
 
-## Operations
 
-- Check process and database readiness with `GET /health/ready`.
-- Apply tracked PostgreSQL migrations with `npm run migrate` from a deployment environment that can reach `DATABASE_URL`.
-- Run backend smoke and regression tests with `npm test`.
-- Run headless Chromium UI smoke tests with `npm run test:ui`.
-- Review the endpoint, authentication, and tenant-isolation contract in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
+                                        contact     us      Phone: 09138465911
+                                       Email: sasinnovationlimited@gmail.com
+                                       Platform: eduos-zf0v.onrender.com
