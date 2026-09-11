@@ -13,4 +13,6 @@ environment designed around how schools operate.
 
                                         contact     us      Phone: 09138465911
                                        Email: sasinnovationlimited@gmail.com
-                                       Platform: eduos-zf0v.onrender.com
+                                                 Platform:
+
+                                       HTTPS://EDUOS-ZF0V.ONRENDER.COM/
