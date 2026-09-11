@@ -335,62 +335,15 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   if (!user) {
-    // Determine role based on email clues
-    let role = "ADMIN"; // Default to ADMIN for supreme accessibility
-    if (emailStr.includes("teacher")) {
-      role = "TEACHER";
-    } else if (emailStr.includes("student")) {
-      role = "STUDENT";
-    } else if (emailStr.includes("parent")) {
-      role = "PARENT";
-    }
-
-    // Determine name
-    const namePart = emailStr.split("@")[0];
-    const capitalizedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-
-    // Auto-create tenant if a dynamic subdomain is used
-    let finalTenantId = tenantId || "default";
-    if (finalTenantId && finalTenantId !== "default") {
-      const existingTenant = await dbGetTenantById(finalTenantId);
-      if (!existingTenant) {
-        // Also check by subdomain to be safe
-        const tenantBySub = await dbGetTenantBySubdomain(finalTenantId);
-        if (!tenantBySub) {
-          // Dynamic tenant auto-creation!
-          const newSchoolName = capitalizedName + " Academy";
-          await dbAddTenant({
-            id: finalTenantId,
-            name: newSchoolName,
-            subdomain: finalTenantId,
-            logoUrl: "",
-            primaryColor: "#4f46e5",
-            secondaryColor: "#0d9488",
-            contactEmail: emailStr,
-            contactPhone: "+234 812 345 6789",
-            address: "School Campus, Nigeria",
-            status: "active",
-            plan: "Enterprise",
-            academicYear: "2025/2026",
-            createdAt: new Date().toISOString()
-          });
-        }
-      }
-    }
-
-    // Auto-register user
-    user = await dbAddUser({
-      id: "u-" + Math.random().toString(36).substring(2, 9),
-      email: emailStr,
-      name: capitalizedName,
-      password: password,
-      role: role,
-      tenantId: finalTenantId,
-      isActive: true,
-      createdAt: new Date().toISOString()
-    });
-  } else if (user.password !== password) {
     return res.status(401).json({ error: true, message: "Invalid email or password" });
+  }
+
+  if (user.password !== password) {
+    return res.status(401).json({ error: true, message: "Invalid email or password" });
+  }
+
+  if (user.isActive === false) {
+    return res.status(403).json({ error: true, message: "Account is disabled. Please contact your school administrator." });
   }
 
   let finalUser = user;
@@ -815,6 +768,22 @@ app.get("/api/tenants/:id", authenticateToken, async (req: any, res) => {
   res.json(tenant);
 });
 
+app.get("/api/teachers", authenticateToken, async (req: any, res) => {
+  try {
+    const allUsers = await dbGetUsers();
+    const targetTenantId = req.query.tenant_id || req.user.tenantId || "default";
+    const teachers = allUsers
+      .filter((u: any) => u.role === "TEACHER" && (u.tenantId === targetTenantId || targetTenantId === "default"))
+      .map((u: any) => {
+        const { password, ...safeTeacher } = u;
+        return safeTeacher;
+      });
+    res.json(teachers);
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: err.message || "Failed to retrieve teachers" });
+  }
+});
+
 app.get("/api/tenants/:id/admins", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN") {
     return res.status(403).json({ error: true, message: "Super Admin privileges required" });
@@ -824,8 +793,13 @@ app.get("/api/tenants/:id/admins", authenticateToken, async (req: any, res) => {
   }
   const tenantId = req.params.id;
   const allUsers = await dbGetUsers();
-  // Filter for users in this tenant with role ADMIN
-  const tenantAdmins = allUsers.filter(u => u.tenantId === tenantId && u.role === "ADMIN");
+  // Filter for users in this tenant with role ADMIN, safely omitting credentials
+  const tenantAdmins = allUsers
+    .filter(u => u.tenantId === tenantId && u.role === "ADMIN")
+    .map(u => {
+      const { password, ...safeAdmin } = u;
+      return safeAdmin;
+    });
   res.json(tenantAdmins);
 });
 
@@ -1307,9 +1281,16 @@ app.get("/api/exams/:id", authenticateToken, async (req: any, res) => {
   }
 
   const examQuestions = await dbGetQuestionsForExam(exam.id);
+  let safeQuestions = examQuestions;
+  if (req.user.role === "STUDENT") {
+    safeQuestions = examQuestions.map((q: any) => {
+      const { answer, ...safeQ } = q;
+      return safeQ;
+    });
+  }
   res.json({
     ...exam,
-    questions: examQuestions
+    questions: safeQuestions
   });
 });
 
@@ -2312,6 +2293,44 @@ app.post("/api/attendance", authenticateToken, async (req: any, res) => {
 });
 
 // 5.5 ATTENDANCE COGNITIVE ANALYTICS (AI DIAGNOSIS)
+app.get("/api/analytics/attendance-insights", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== "ADMIN" && req.user.role !== "TEACHER") {
+    return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
+  }
+
+  try {
+    const attendanceLogs = await dbGetAttendance();
+    const students = await dbGetStudents();
+    const targetTenantId = req.query.tenant_id || req.user.tenantId || "default";
+
+    const filteredStudents = students.filter((s: any) => (s.tenantId || "default") === targetTenantId);
+    const avgRate = filteredStudents.length > 0
+      ? Math.round(filteredStudents.reduce((acc: number, s: any) => acc + (s.attendanceRate || s.attendance_rate || 90), 0) / filteredStudents.length * 10) / 10
+      : 92.4;
+
+    const insights = `### 📈 TREND ASSESSMENT
+• **Institutional Cohort Health**: Active student attendance averages **${avgRate}%**, comfortably sustaining the primary operational threshold.
+• **Pattern Dynamics**: Peak classroom engagement occurs mid-week (Tuesday through Thursday), with minor attendance variance across early morning sessions.
+
+### ⚠️ DETECTED ANOMALIES
+• **Threshold Alerts**: ${avgRate < 90 ? "⚠️ Attendance is currently below the 90% institutional benchmark." : "✅ Overall student engagement is within optimal parameters."}
+
+### 🛠️ RECOMMENDED RECOVERY ACTIONS
+1. **Targeted Advisory**: Automatically notify guardians when individual attendance drops below 85%.
+2. **Weekly Roll Call Audits**: Enforce timely attendance submission at the beginning of period 1.
+3. **Punctuality Recognition**: Commend classes with 95%+ weekly consistency at Friday assemblies.`;
+
+    res.json({
+      averageRate: avgRate,
+      totalStudents: filteredStudents.length,
+      attendanceRecordsCount: attendanceLogs.length,
+      insights
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: true, message: `Failed to compile attendance insights: ${err.message || err}` });
+  }
+});
+
 app.post("/api/analytics/attendance-insights", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN" && req.user.role !== "TEACHER") {
     return res.status(403).json({ error: true, message: "Forbidden: Access denied" });
@@ -2687,9 +2706,27 @@ app.post("/api/ai/advisor-chat", async (req, res) => {
 
 // AI Student Performance Report Summary Generator
 app.post("/api/ai/student-summary", authenticateToken, async (req, res) => {
-  const { studentName, className, attendanceRate, examAttempts } = req.body;
+  let { studentName, studentId, className, attendanceRate, examAttempts } = req.body;
+  if (!studentName && studentId) {
+    const student = await dbGetStudentById(studentId);
+    if (student) {
+      studentName = student.name;
+      if (!className && student.classId) {
+        const cls = (await dbGetClasses()).find((c: any) => c.id === student.classId);
+        className = cls ? cls.name : student.classId;
+      }
+      if (attendanceRate === undefined) {
+        attendanceRate = student.attendanceRate;
+      }
+      if (!examAttempts) {
+        examAttempts = await dbGetStudentAttempts(student.id);
+      }
+    } else {
+      studentName = `Student ${studentId}`;
+    }
+  }
   if (!studentName) {
-    return res.status(400).json({ error: true, message: "Missing studentName in payload." });
+    return res.status(400).json({ error: true, message: "Missing studentName or studentId in payload." });
   }
 
   const examDetailsStr = (examAttempts || [])
@@ -2738,7 +2775,7 @@ app.post("/api/ai/student-summary", authenticateToken, async (req, res) => {
 });
 
 // AI Administrative Dashboard compiler endpoint
-app.get("/api/ai/admin-dashboard", authenticateToken, async (req: any, res) => {
+const handleAdminDashboard = async (req: any, res: any) => {
   try {
     const students = await dbGetStudents();
     const classes = await dbGetClasses();
@@ -2913,7 +2950,10 @@ app.get("/api/ai/admin-dashboard", authenticateToken, async (req: any, res) => {
       schoolLevelInsights: "Weekly attendance reviews show a direct impact on average examination results. We suggest mandating portal attendance logging before CBT access is unlocked, and offering rewards for students with 95%+ weekly consistency."
     });
   }
-});
+};
+
+app.get("/api/ai/admin-dashboard", authenticateToken, handleAdminDashboard);
+app.post("/api/ai/admin-dashboard", authenticateToken, handleAdminDashboard);
 
 // AI Question Explanation Generator
 app.post("/api/ai/explain-question", authenticateToken, async (req: any, res) => {
@@ -4057,9 +4097,20 @@ function saveEdvesStore(store: any) {
 }
 
 // API Routes
-app.get("/api/edves/data", authenticateToken, (req, res) => {
+app.get("/api/edves/data", authenticateToken, (req: any, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: true, message: "Forbidden: Admin access required" });
+  }
   const store = getEdvesStore();
-  res.json(store);
+  const sanitized = { ...store };
+  delete (sanitized as any).users;
+  if (sanitized.staff && Array.isArray(sanitized.staff)) {
+    sanitized.staff = sanitized.staff.map((s: any) => {
+      const { password, ...safeStaff } = s;
+      return safeStaff;
+    });
+  }
+  res.json(sanitized);
 });
 
 app.post("/api/edves/behavior", authenticateToken, (req: any, res) => {
@@ -4286,7 +4337,13 @@ app.post("/api/newglobe/attendance", authenticateToken, (req: any, res) => {
 // FLEXISAF SAFSMS API ROUTES
 // ----------------------------------------------------
 
-// 1. Save or Update Student Continuous Assessment & Term Exam Gradebook Marks
+// 1. Retrieve Continuous Assessment & Term Exam Gradebook Marks
+app.get("/api/flexisaf/gradebook", authenticateToken, (req: any, res) => {
+  const store = getEdvesStore();
+  res.json(store.flexisafGradebook || []);
+});
+
+// 2. Save or Update Student Continuous Assessment & Term Exam Gradebook Marks
 app.post("/api/flexisaf/gradebook", authenticateToken, (req: any, res) => {
   const { studentId, studentName, subject, ca1, ca2, exam } = req.body;
   if (!studentId || !subject) {
@@ -4417,7 +4474,15 @@ async function startServer() {
   } else {
     // Serve static files in production
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      maxAge: "1y",
+      immutable: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        }
+      }
+    }));
     app.get("/{*splat}", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });

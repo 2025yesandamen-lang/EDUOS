@@ -718,9 +718,9 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password: pass, tenantId: tenantIdToMatch })
       });
-      if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+      if (res.headers.get("content-type")?.includes("application/json")) {
         const data = await res.json();
-        if (data.token) {
+        if (res.ok && data.token) {
           localStorage.setItem("cbt_prox_token", data.token);
           localStorage.setItem("authToken", data.token);
           localStorage.setItem("authUser", JSON.stringify(data.user));
@@ -743,10 +743,10 @@ export default function App() {
             setActiveTab("dashboard");
           }
         } else {
-          setErrorMsg(data.message || "Failed to authenticate or invalid login credentials.");
+          setErrorMsg(data.message || "Invalid email or password.");
         }
       } else {
-        setErrorMsg("Monolith Session authorization service is currently offline or unreachable.");
+        setErrorMsg("Session authorization service is currently offline or unreachable.");
       }
     } catch (e) {
       setErrorMsg("Network timed out or connection error during server authentication.");
@@ -867,10 +867,49 @@ export default function App() {
                 </div>
               )}
 
+              {/* Quick Demo Credentials */}
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Verified Demo Credentials</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("admin@eduos.com", "admin123")}
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                  >
+                    <div className="text-[11px] font-bold text-slate-700">Administrator</div>
+                    <div className="text-[10px] font-mono text-slate-400">admin@eduos.com</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("adebayo@eduos.com", "adebayo123")}
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                  >
+                    <div className="text-[11px] font-bold text-slate-700">Teacher</div>
+                    <div className="text-[10px] font-mono text-slate-400">adebayo@eduos.com</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("student@eduos.com", "student123")}
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                  >
+                    <div className="text-[11px] font-bold text-slate-700">Student</div>
+                    <div className="text-[10px] font-mono text-slate-400">student@eduos.com</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("parent@eduos.com", "parent123")}
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                  >
+                    <div className="text-[11px] font-bold text-slate-700">Parent</div>
+                    <div className="text-[10px] font-mono text-slate-400">parent@eduos.com</div>
+                  </button>
+                </div>
+              </div>
+
               {/* Standard Credentials Fields */}
-              <div className="relative flex py-2 items-center">
+              <div className="relative flex py-1 items-center">
                 <div className="flex-grow border-t border-slate-200"></div>
-                <span className="flex-shrink mx-4 text-slate-400 text-xs uppercase tracking-wider font-mono">Login</span>
+                <span className="flex-shrink mx-3 text-slate-400 text-[10px] uppercase tracking-wider font-mono">Or Manual Sign In</span>
                 <div className="flex-grow border-t border-slate-200"></div>
               </div>
 
@@ -883,16 +922,16 @@ export default function App() {
                 className="space-y-4"
               >
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Registered Email</label>
-                  <input name="email" type="email" placeholder="e.g. user@eduos.com" className="w-full text-xs border border-slate-200 p-2.5 rounded-lg mt-1 focus:outline-indigo-500" required />
+                  <label htmlFor="login-email" className="text-xs font-bold text-slate-500 uppercase">Registered Email</label>
+                  <input id="login-email" name="email" type="email" placeholder="e.g. user@eduos.com" className="w-full text-xs border border-slate-200 p-2.5 rounded-lg mt-1 focus:outline-indigo-500" required />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Password Key</label>
-                  <input name="password" type="password" placeholder="••••••••" className="w-full text-xs border border-slate-200 p-2.5 rounded-lg mt-1 focus:outline-indigo-500" required />
+                  <label htmlFor="login-password" className="text-xs font-bold text-slate-500 uppercase">Password Key</label>
+                  <input id="login-password" name="password" type="password" placeholder="••••••••" className="w-full text-xs border border-slate-200 p-2.5 rounded-lg mt-1 focus:outline-indigo-500" required />
                 </div>
                 <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md flex items-center justify-center space-x-2">
                   <LogIn className="h-4 w-4" />
-                  <span>{loading ? "Decrypting profile keys..." : "Authorize Monolith Session"}</span>
+                  <span>{loading ? "Authorizing session..." : "Sign In to EduOS"}</span>
                 </button>
               </form>
 

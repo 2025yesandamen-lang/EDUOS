@@ -395,3 +395,127 @@ test("student sessions resolve the linked SIS profile for exam start", async () 
   assert.equal(startResponse.status, 201);
   assert.equal((await startResponse.json()).attempt.studentId, "s-4-bat0d");
 });
+
+test("arbitrary unregistered logins are strictly rejected with 401 without auto-registration", async () => {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "unknown_attacker@eduos.com", password: "arbitrary_password_123" })
+  });
+  assert.equal(response.status, 401);
+  const body = await response.json();
+  assert.equal(body.error, true);
+  assert.match(body.message, /Invalid email or password/);
+});
+
+test("GET /api/teachers returns teacher roster with credentials safely redacted", async () => {
+  const response = await fetch(`${baseUrl}/api/teachers`, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+  assert.equal(response.status, 200);
+  const teachers = await response.json();
+  assert.ok(Array.isArray(teachers));
+  for (const teacher of teachers) {
+    assert.equal(teacher.password, undefined);
+    assert.equal(teacher.role, "TEACHER");
+  }
+});
+
+test("GET /api/analytics/attendance-insights returns structured AI cognitive insights", async () => {
+  const response = await fetch(`${baseUrl}/api/analytics/attendance-insights`, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.ok(data.insights);
+  assert.ok(typeof data.averageRate === "number");
+});
+
+test("POST /api/ai/student-summary accepts studentId directly and returns report remarks", async () => {
+  const response = await fetch(`${baseUrl}/api/ai/student-summary`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Bearer ${adminToken}`
+    },
+    body: JSON.stringify({ studentId: "s-1" })
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.ok(data.remarks);
+});
+
+test("GET and POST /api/ai/admin-dashboard return administrative summaries", async () => {
+  const getRes = await fetch(`${baseUrl}/api/ai/admin-dashboard`, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+  assert.equal(getRes.status, 200);
+  const getData = await getRes.json();
+  assert.ok(Array.isArray(getData.classSummaries));
+
+  const postRes = await fetch(`${baseUrl}/api/ai/admin-dashboard`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Bearer ${adminToken}`
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(postRes.status, 200);
+});
+
+test("GET /api/flexisaf/gradebook returns CA and gradebook entries", async () => {
+  const res = await fetch(`${baseUrl}/api/flexisaf/gradebook`, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(Array.isArray(data));
+});
+
+test("GET /api/edves/data enforces Admin RBAC and redacts credentials", async () => {
+  // Student should be forbidden (403)
+  const studentLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "sade@email.com", password: "12345" })
+  });
+  const studentToken = (await studentLoginRes.json()).token;
+
+  const forbiddenRes = await fetch(`${baseUrl}/api/edves/data`, {
+    headers: { Authorization: `Bearer ${studentToken}` }
+  });
+  assert.equal(forbiddenRes.status, 403);
+
+  // Admin should succeed (200) and have user credentials redacted
+  const adminRes = await fetch(`${baseUrl}/api/edves/data`, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+  assert.equal(adminRes.status, 200);
+  const edvesData = await adminRes.json();
+  assert.equal(edvesData.users, undefined);
+  if (edvesData.staff) {
+    for (const s of edvesData.staff) {
+      assert.equal(s.password, undefined);
+    }
+  }
+});
+
+test("GET /api/exams/:id redacts answer keys for students", async () => {
+  const studentLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "sade@email.com", password: "12345" })
+  });
+  const studentToken = (await studentLoginRes.json()).token;
+
+  const res = await fetch(`${baseUrl}/api/exams/ex-1`, {
+    headers: { Authorization: `Bearer ${studentToken}` }
+  });
+  assert.equal(res.status, 200);
+  const exam = await res.json();
+  assert.ok(Array.isArray(exam.questions));
+  for (const q of exam.questions) {
+    assert.equal(q.answer, undefined, "Student should not receive raw answer keys");
+  }
+});
