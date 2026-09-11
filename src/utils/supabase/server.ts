@@ -4,6 +4,11 @@ const supabaseUrl = process.env.SUPABASE_URL || "https://qobtybbklcqmdwsrwito.su
 const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 export const createClient = (req?: any, res?: any) => {
+  if (!supabaseKey) {
+    return new Proxy({} as any, {
+      get: () => () => Promise.resolve({ data: null, error: null }),
+    });
+  }
   return createServerClient(
     supabaseUrl,
     supabaseKey,

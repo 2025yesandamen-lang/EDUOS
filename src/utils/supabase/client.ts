@@ -14,8 +14,14 @@ const supabaseKey =
   (typeof window !== "undefined" && ((window as any).env?.SUPABASE_PUBLISHABLE_KEY || (window as any).env?.SUPABASE_ANON_KEY || (window as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || (window as any).env?.VITE_SUPABASE_ANON_KEY)) ||
   "";
 
-export const createClient = () =>
-  createBrowserClient(
+export const createClient = () => {
+  if (!supabaseKey) {
+    return new Proxy({} as any, {
+      get: () => () => Promise.resolve({ data: null, error: null }),
+    });
+  }
+  return createBrowserClient(
     supabaseUrl,
     supabaseKey
   );
+};

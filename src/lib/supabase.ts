@@ -36,5 +36,40 @@ const supabaseAnonKey =
   getEnvValue("SUPABASE_ANON_KEY") ||
   "";
 
+function createSafeSupabaseClient() {
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      return createClient(supabaseUrl, supabaseAnonKey);
+    } catch (err) {
+      console.warn("[Supabase] Failed to initialize client:", err);
+    }
+  }
+  // Safe mock client when no key is configured
+  return new Proxy({} as any, {
+    get: (_, prop) => {
+      if (prop === "from") {
+        return () => ({
+          select: () => ({
+            limit: () => Promise.resolve({ data: [], error: null }),
+            eq: () => Promise.resolve({ data: [], error: null }),
+            then: (resolve: any) => resolve({ data: [], error: null }),
+          }),
+          insert: () => Promise.resolve({ data: null, error: null }),
+          update: () => Promise.resolve({ data: null, error: null }),
+          delete: () => Promise.resolve({ data: null, error: null }),
+        });
+      }
+      if (prop === "auth") {
+        return {
+          getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+          getSession: () => Promise.resolve({ data: { session: null }, error: null }),
+          onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+        };
+      }
+      return () => Promise.resolve({ data: null, error: null });
+    },
+  });
+}
+
 // Initialize the standard Supabase client for client-side operations.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createSafeSupabaseClient();

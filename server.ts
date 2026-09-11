@@ -105,7 +105,7 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const app = express();
-const START_PORT = Number(process.env.PORT) || 3000;
+const START_PORT = (process.env.PORT && process.env.PORT !== "8080") ? Number(process.env.PORT) : 3000;
 const MAX_PORT_SCAN = 20;
 const startupStartedAt = Date.now();
 
