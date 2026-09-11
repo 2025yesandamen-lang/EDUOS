@@ -878,9 +878,9 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                         return null;
                       }}
                     />
-                    {tenants.map((t) => (
+                    {tenants.map((t, idx) => (
                       <Area
-                        key={t.id}
+                        key={`area-${t.id}-${idx}`}
                         type="monotone"
                         dataKey={t.name}
                         name={t.name}
@@ -1205,12 +1205,12 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {filteredTenants.map((t) => {
+                {filteredTenants.map((t, idx) => {
                   const isSelected = selectedIds.includes(t.id);
                   const isDefault = t.id === "default";
                   return (
                     <tr 
-                      key={t.id}
+                      key={`tenant-row-${t.id}-${idx}`}
                       className={`hover:bg-slate-50/50 transition-colors ${isSelected ? "bg-indigo-50/20" : ""}`}
                     >
                       <td className="p-4 text-center">
@@ -1357,12 +1357,12 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredTenants.map((t) => {
+          {filteredTenants.map((t, idx) => {
             const isDefault = t.id === "default";
             const isSelected = selectedIds.includes(t.id);
             return (
               <motion.div
-                key={t.id}
+                key={`tenant-card-${t.id}-${idx}`}
                 id={`tenant-card-${t.id}`}
                 layoutId={`tenant-card-id-${t.id}`}
                 className={`bg-white border rounded-2xl overflow-hidden hover:shadow-md transition-all flex flex-col h-full ${

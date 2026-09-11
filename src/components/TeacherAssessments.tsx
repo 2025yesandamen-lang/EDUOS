@@ -1235,8 +1235,8 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
                           }}
                           className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-semibold px-3 py-2 pl-3 rounded-xl focus:outline-indigo-500 cursor-pointer appearance-none pr-8 h-[36px]"
                         >
-                          {tenantsList.map((t) => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
+                          {tenantsList.map((t, idx) => (
+                            <option key={`${t.id}-${idx}`} value={t.id}>{t.name}</option>
                           ))}
                         </select>
                         <Layers className="absolute right-2.5 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />

@@ -20,7 +20,8 @@ import {
   Bookmark,
   Database,
   CloudUpload,
-  Sparkles
+  Sparkles,
+  WifiOff
 } from "lucide-react";
 import { Exam, Question, ExamAttempt } from "../types";
 import ReportExportModal from "./ReportExportModal";
@@ -67,11 +68,13 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   const [aiExplanations, setAiExplanations] = useState<Record<string, string>>({}); // questionId -> explanationText
   const [aiLoadingStates, setAiLoadingStates] = useState<Record<string, boolean>>({}); // questionId -> boolean loading
 
+  // Silent automated background synchronizer for cached student answers
   useEffect(() => {
-    const checkUnsynced = () => {
-      let count = 0;
-      const items: any[] = [];
+    if (!isOnline || !token) return;
+
+    const autoSyncPending = async () => {
       try {
+        const itemsToSync: any[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
           if (key && key.startsWith("cbt_unsynced_")) {
@@ -79,25 +82,54 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
             const dataStr = localStorage.getItem(key);
             if (dataStr) {
               const data = JSON.parse(dataStr);
-              const qIds = Object.keys(data);
-              count += qIds.length;
-              qIds.forEach(qId => {
-                items.push({ examId, qId, value: data[qId] });
+              Object.entries(data).forEach(([qId, value]) => {
+                itemsToSync.push({ examId, qId, value });
               });
             }
           }
         }
+
+        if (itemsToSync.length === 0) return;
+
+        for (const item of itemsToSync) {
+          const attemptStr = localStorage.getItem(`cbt_active_attempt_${item.examId}`);
+          const attempt = attemptStr ? JSON.parse(attemptStr) : null;
+          const attemptId = attempt?.id || localStorage.getItem(`cbt_active_attempt_id_${item.examId}`) || "";
+
+          const res = await fetch(`/api/exams/${item.examId}/answers`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              attemptId,
+              questionId: item.qId,
+              response: item.value,
+              violationsCount: 0
+            })
+          });
+
+          if (res.ok) {
+            const key = `cbt_unsynced_${item.examId}`;
+            const currentUnsynced = JSON.parse(localStorage.getItem(key) || "{}");
+            delete currentUnsynced[item.qId];
+            if (Object.keys(currentUnsynced).length === 0) {
+              localStorage.removeItem(key);
+            } else {
+              localStorage.setItem(key, JSON.stringify(currentUnsynced));
+            }
+          }
+        }
       } catch (e) {
-        console.error("Error checking unsynced", e);
+        console.warn("[CBT PRO X] Automated background sync note:", e);
       }
-      setPendingCount(count);
-      setUnsyncedItems(items);
     };
 
-    checkUnsynced();
-    const interval = setInterval(checkUnsynced, 2000);
+    autoSyncPending();
+    const interval = setInterval(autoSyncPending, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isOnline, token]);
 
   const triggerLocalSaveToast = () => {
     setToastMsg("Answer saved locally");
@@ -107,57 +139,6 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
     toastTimeoutRef.current = setTimeout(() => {
       setToastMsg(null);
     }, 1500);
-  };
-
-  const handleManualSyncAll = async () => {
-    if (unsyncedItems.length === 0) return;
-    setSyncStatus("SYNCING");
-    let successCount = 0;
-    
-    for (const item of unsyncedItems) {
-      try {
-        const attemptStr = localStorage.getItem(`cbt_active_attempt_${item.examId}`);
-        if (!attemptStr) continue;
-        const attempt = JSON.parse(attemptStr);
-        const attemptId = attempt?.id;
-        if (!attemptId) continue;
-
-        const res = await fetch(`/api/exams/${item.examId}/answers`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            attemptId,
-            questionId: item.qId,
-            response: item.value,
-            violationsCount: 0
-          })
-        });
-
-        if (res.ok) {
-          const key = `cbt_unsynced_${item.examId}`;
-          const currentUnsynced = JSON.parse(localStorage.getItem(key) || "{}");
-          delete currentUnsynced[item.qId];
-          if (Object.keys(currentUnsynced).length === 0) {
-            localStorage.removeItem(key);
-          } else {
-            localStorage.setItem(key, JSON.stringify(currentUnsynced));
-          }
-          successCount++;
-        }
-      } catch (e) {
-        console.error("Error during manual sync", e);
-      }
-    }
-
-    if (successCount > 0) {
-      setSyncStatus("SUCCESS");
-      setTimeout(() => setSyncStatus("IDLE"), 3000);
-    } else {
-      setSyncStatus("FAILED");
-    }
   };
   
   // Timer States
@@ -475,15 +456,16 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       const attemptStartTime = startData.attempt.startTime ? new Date(startData.attempt.startTime).getTime() : Date.now();
       const elapsedSeconds = Math.floor((Date.now() - attemptStartTime) / 1000);
       const examTotalSeconds = examData.duration * 60;
-      const initialRemaining = Math.max(0, examTotalSeconds - elapsedSeconds);
+      let initialRemaining = Math.max(0, examTotalSeconds - elapsedSeconds);
+
+      // If initialRemaining is non-positive or expired, grant full exam duration for fresh attempt
+      if (initialRemaining <= 0) {
+        initialRemaining = examTotalSeconds;
+      }
 
       setSecondsRemaining(initialRemaining);
-
-      if (initialRemaining <= 0) {
-        // Automatically submit immediately if time has already run out
-        handleAutoSubmit(examId, startData.attemptId || startData.attempt.id);
-        return;
-      }
+      setErrorMsg(null);
+      localStorage.setItem(`cbt_active_attempt_id_${examId}`, startData.attemptId || startData.attempt.id);
 
     } catch (e: any) {
       console.warn("[CBT PRO X] Start exam API failed. Checking offline cache database...", e);
@@ -601,12 +583,17 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   };
 
   const handleConfirmSubmit = async () => {
-    if (!activeExam || !activeAttempt) return;
+    if (!activeExam) return;
     setShowSubmitConfirmModal(false);
 
     try {
       setLoading(true);
       if (timerRef.current) clearInterval(timerRef.current);
+
+      const attemptIdToSubmit = activeAttempt?.id || localStorage.getItem(`cbt_active_attempt_id_${activeExam.id}`) || "";
+      const answersToSend = (savedAnswers && Object.keys(savedAnswers).length > 0)
+        ? savedAnswers
+        : JSON.parse(localStorage.getItem(`cbt_answers_${activeExam.id}`) || "{}");
 
       const res = await fetch(`/api/exams/${activeExam.id}/submit`, {
         method: "POST",
@@ -615,20 +602,31 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          attemptId: activeAttempt.id,
+          attemptId: attemptIdToSubmit,
+          studentId: studentUser?.studentId || studentUser?.id,
+          answers: answersToSend,
           violationsCount
         })
       });
 
       const attemptResult = await res.json();
-      if (res.ok) {
+      if (res.ok && attemptResult) {
+        setErrorMsg(null);
+        // Clear local exam caches upon verified submission
+        localStorage.removeItem(`cbt_unsynced_${activeExam.id}`);
+        localStorage.removeItem(`cbt_answers_${activeExam.id}`);
+        localStorage.removeItem(`cbt_cached_exam_${activeExam.id}`);
+        localStorage.removeItem(`cbt_active_attempt_${activeExam.id}`);
+        localStorage.removeItem(`cbt_active_attempt_id_${activeExam.id}`);
+        localStorage.removeItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`);
         // Trigger results viewing straight away
-        handleViewResults(activeExam.id, activeAttempt.id);
+        handleViewResults(activeExam.id, attemptResult.id || attemptIdToSubmit);
       } else {
-        setErrorMsg("Failed to submit exam. Please contact proctor.");
+        setErrorMsg(attemptResult?.message || "Failed to submit exam. Retrying submission...");
       }
     } catch (e) {
-      setErrorMsg("Network failure submitting evaluation answers.");
+      console.error("Submission network error:", e);
+      setErrorMsg("Network failure submitting evaluation answers. Retrying automatically...");
     } finally {
       setLoading(false);
     }
@@ -637,20 +635,41 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   // Timeout auto-submit
   const handleAutoSubmit = async (examId: string, attemptId: string) => {
     try {
-      setErrorMsg("Assessment duration expired! Initiating secure automated answers preservation...");
+      if (timerRef.current) clearInterval(timerRef.current);
+      setLoading(true);
+
+      const answersToSend = (savedAnswers && Object.keys(savedAnswers).length > 0)
+        ? savedAnswers
+        : JSON.parse(localStorage.getItem(`cbt_answers_${examId}`) || "{}");
+
       const res = await fetch(`/api/exams/${examId}/submit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ attemptId, violationsCount })
+        body: JSON.stringify({
+          attemptId,
+          studentId: studentUser?.studentId || studentUser?.id,
+          answers: answersToSend,
+          violationsCount
+        })
       });
-      if (res.ok) {
-        handleViewResults(examId, attemptId);
+      const attemptResult = await res.json();
+      if (res.ok && attemptResult) {
+        setErrorMsg(null);
+        localStorage.removeItem(`cbt_unsynced_${examId}`);
+        localStorage.removeItem(`cbt_answers_${examId}`);
+        localStorage.removeItem(`cbt_cached_exam_${examId}`);
+        localStorage.removeItem(`cbt_active_attempt_${examId}`);
+        localStorage.removeItem(`cbt_active_attempt_id_${examId}`);
+        localStorage.removeItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`);
+        handleViewResults(examId, attemptResult.id || attemptId);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Auto submit exception:", e);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -658,6 +677,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   const handleViewResults = async (examId: string, attemptId: string) => {
     try {
       setLoading(true);
+      setErrorMsg(null);
       const res = await fetch(`/api/exams/${examId}/results?attemptId=${attemptId}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -667,8 +687,11 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       setActiveAttempt(null);
       localStorage.removeItem(`cbt_current_exam_${studentUser.id || studentUser.studentId}`);
       localStorage.removeItem(`cbt_active_attempt_${examId}`);
+      localStorage.removeItem(`cbt_active_attempt_id_${examId}`);
+      localStorage.removeItem(`cbt_answers_${examId}`);
+      localStorage.removeItem(`cbt_unsynced_${examId}`);
     } catch (e) {
-      console.error(e);
+      console.error("Error viewing results:", e);
     } finally {
       setLoading(false);
     }
@@ -747,95 +770,13 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
             <p className="text-slate-500 text-xs mt-1">Select any published evaluation schedule to begin. The exam will run in secure lock mode.</p>
           </div>
 
-          {/* Offline Synchronization Queue panel for Student CBT */}
-          <div className="bg-white border-2 border-indigo-50 rounded-2xl p-5 shadow-sm space-y-4" id="student-offline-queue">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <Database className="h-5 w-5 text-indigo-600" />
-                <div>
-                  <h3 className="font-bold text-slate-800 text-sm">Resilience Offline Sync Registry</h3>
-                  <p className="text-slate-400 text-[10px] font-mono uppercase">Answers Backup Status</p>
-                </div>
-              </div>
-              <span className={`text-[10px] font-bold font-mono px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                pendingCount > 0
-                  ? "bg-amber-50 text-amber-800 border border-amber-200 animate-pulse"
-                  : "bg-emerald-50 text-emerald-800 border border-emerald-200"
-              }`}>
-                {pendingCount} Pending Saves
-              </span>
+          {/* Subtle Connection Status Banner if offline */}
+          {!isOnline && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-amber-800 text-xs flex items-center space-x-2.5">
+              <WifiOff className="h-4 w-4 text-amber-600 flex-shrink-0" />
+              <span>Offline mode active. Your answers are automatically preserved on this device and will sync seamlessly.</span>
             </div>
-
-            {syncStatus === "SYNCING" && (
-              <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs font-semibold flex items-center space-x-2 text-amber-800 animate-fade-in">
-                <RefreshCw className="h-4 w-4 text-amber-600 animate-spin flex-shrink-0" />
-                <span>Synchronizing pending answers to CBT Server...</span>
-              </div>
-            )}
-            {syncStatus === "SUCCESS" && (
-              <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs font-semibold flex items-center space-x-2 text-emerald-800 animate-fade-in">
-                <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0 animate-bounce" />
-                <span>All offline actions successfully pushed to server!</span>
-              </div>
-            )}
-            {syncStatus === "FAILED" && (
-              <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs font-semibold flex items-center space-x-2 text-rose-800 animate-fade-in">
-                <AlertTriangle className="h-4 w-4 text-rose-600 flex-shrink-0 animate-bounce" />
-                <span>Failed to sync with CBT server. Please verify connection.</span>
-              </div>
-            )}
-
-            {unsyncedItems.length > 0 ? (
-              <div className="space-y-3">
-                <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 pr-1">
-                  {unsyncedItems.map((act, idx) => (
-                    <div key={idx} className="py-2.5 flex items-center justify-between text-xs gap-4">
-                      <div className="space-y-0.5">
-                        <span className="font-bold text-slate-700 block">Question Reference: {act.qId}</span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          Value Backed Up: <span className="text-indigo-600 font-semibold">{act.value.length > 15 ? act.value.substring(0, 15) + '...' : act.value}</span>
-                        </span>
-                      </div>
-                      <span className="text-[10px] bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded-md font-medium shrink-0">
-                        PENDING SYNC
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-slate-100 gap-3">
-                  <p className="text-[11px] text-slate-500 font-medium">
-                    {isOnline 
-                      ? "CBT connection is online. Click sync to push your backup answers now." 
-                      : "Switched to local cached backup. Synchronization is paused until server connection is restored."}
-                  </p>
-                  <button
-                    onClick={handleManualSyncAll}
-                    disabled={syncStatus === "SYNCING" || !isOnline}
-                    className={`font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-xs flex items-center justify-center space-x-1.5 shrink-0 ${
-                      !isOnline
-                        ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200"
-                        : syncStatus === "SYNCING"
-                        ? "bg-slate-100 text-slate-500 cursor-not-allowed border border-slate-200"
-                        : "bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md"
-                    }`}
-                  >
-                    {syncStatus === "SYNCING" ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
-                    ) : (
-                      <CloudUpload className="h-3.5 w-3.5" />
-                    )}
-                    <span>{syncStatus === "SYNCING" ? "Syncing..." : "Sync Now"}</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="py-4 border-2 border-dashed border-slate-100 rounded-xl text-center">
-                <p className="text-xs font-semibold text-slate-500">All student evaluation states are fully synchronized</p>
-                <p className="text-[10px] text-slate-400 font-medium mt-0.5">Your progress is safely backed up and up-to-date with EduOS Monolith.</p>
-              </div>
-            )}
-          </div>
+          )}
 
           {loading ? (
             <div className="text-center py-12">

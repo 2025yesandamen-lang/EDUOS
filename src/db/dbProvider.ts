@@ -1409,7 +1409,8 @@ export async function dbSubmitAttempt(attemptId: string, submissionDetails: any)
         remarks: submissionDetails.remarks,
         submitTime: submissionDetails.submitTime || new Date().toISOString(),
         isSubmitted: true,
-        violationsCount: submissionDetails.violationsCount
+        violationsCount: submissionDetails.violationsCount,
+        ...(submissionDetails.answers ? { answers: submissionDetails.answers } : {})
       }).where(eq(schema.examAttempts.id, attemptId));
       
       return await dbGetExamAttemptById(attemptId);
@@ -1426,6 +1427,9 @@ export async function dbSubmitAttempt(attemptId: string, submissionDetails: any)
         attempt.submitTime = submissionDetails.submitTime || new Date().toISOString();
         attempt.isSubmitted = true;
         attempt.violationsCount = submissionDetails.violationsCount;
+        if (submissionDetails.answers) {
+          attempt.answers = { ...(attempt.answers || {}), ...submissionDetails.answers };
+        }
         writeLocalDb(local);
         return attempt;
       }
@@ -1605,11 +1609,24 @@ export async function dbDeleteBillingCategory(category: string): Promise<string[
 // ----------------------------------------------------
 export async function dbGetTenants(): Promise<any[]> {
   return executeQuery(
-    async () => await db.select().from(schema.tenants),
+    async () => {
+      const rows = await db.select().from(schema.tenants);
+      const seen = new Set<string>();
+      return rows.filter(t => {
+        if (!t.id || seen.has(t.id)) return false;
+        seen.add(t.id);
+        return true;
+      });
+    },
     () => {
       const dbData = readLocalDb();
       if (!dbData.tenants) dbData.tenants = [];
-      return dbData.tenants;
+      const seen = new Set<string>();
+      return dbData.tenants.filter(t => {
+        if (!t.id || seen.has(t.id)) return false;
+        seen.add(t.id);
+        return true;
+      });
     }
   );
 }

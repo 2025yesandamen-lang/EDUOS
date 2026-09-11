@@ -591,8 +591,8 @@ export default function UserManagement({ token, currentUser }: UserManagementPro
                     >
                       <option value="all">🏫 All Schools</option>
                       <option value="default">⚙️ Platform Core</option>
-                      {tenants.map(t => (
-                        <option key={t.id} value={t.id}>🏫 {t.name}</option>
+                      {tenants.map((t, idx) => (
+                        <option key={`${t.id}-${idx}`} value={t.id}>🏫 {t.name}</option>
                       ))}
                     </select>
                   </div>
@@ -638,8 +638,8 @@ export default function UserManagement({ token, currentUser }: UserManagementPro
                         >
                           <option value="">🏫 Bulk Move to School...</option>
                           <option value="default">Platform Core</option>
-                          {tenants.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
+                          {tenants.map((t, idx) => (
+                            <option key={`${t.id}-${idx}`} value={t.id}>{t.name}</option>
                           ))}
                         </select>
                       )}
@@ -979,8 +979,8 @@ export default function UserManagement({ token, currentUser }: UserManagementPro
                       className="w-full bg-white border border-slate-250 rounded-xl pl-9.5 pr-4 py-2.5 text-xs font-bold text-slate-700 focus:border-indigo-500 outline-none transition-all shadow-3xs cursor-pointer"
                     >
                       <option value="default">⚙️ Platform Core (Super Admin Instance)</option>
-                      {tenants.map(t => (
-                        <option key={t.id} value={t.id}>
+                      {tenants.map((t, idx) => (
+                        <option key={`${t.id}-${idx}`} value={t.id}>
                           🏫 {t.name} (subdomain: {t.subdomain})
                         </option>
                       ))}

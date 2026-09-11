@@ -78,10 +78,10 @@
       "password": "jide@eduos",
       "name": "jide jide",
       "role": "ADMIN",
-      "tenantId": "ten-cxwcub5",
+      "tenantId": "ten-jide",
       "isActive": true,
       "createdAt": "2026-07-22T10:46:05.837Z",
-      "tenant_id": "ten-cxwcub5"
+      "tenant_id": "ten-jide"
     },
     {
       "id": "u-1hf08ex",
@@ -125,6 +125,17 @@
       "tenantId": "default",
       "isActive": true,
       "createdAt": "2026-09-04T14:31:29.913Z",
+      "tenant_id": "default"
+    },
+    {
+      "id": "u-daf52ve",
+      "email": "omoobarich@gmail.com",
+      "name": "Omoobarich",
+      "password": "wer",
+      "role": "ADMIN",
+      "tenantId": "default",
+      "isActive": true,
+      "createdAt": "2026-09-11T16:06:28.675Z",
       "tenant_id": "default"
     }
   ],
@@ -1101,6 +1112,19 @@
       "totalQuestions": 0,
       "startTime": "2026-08-01T00:00:00.000Z",
       "endTime": "2026-08-15T23:59:59.000Z"
+    },
+    {
+      "id": "ex-4-cs67b",
+      "title": "jss1 agric science",
+      "description": "soil erosion",
+      "duration": 15,
+      "passingScore": 50,
+      "status": "DRAFT",
+      "totalQuestions": 0,
+      "startTime": "2026-09-11T17:00:29.579Z",
+      "endTime": "2026-10-11T17:00:29.579Z",
+      "tenantId": "super-admin-bypass",
+      "tenant_id": "super-admin-bypass"
     }
   ],
   "questions": [
@@ -1296,11 +1320,12 @@
       },
       "score": 0,
       "percentage": 0,
-      "status": "PENDING_GRADING",
-      "isSubmitted": false,
+      "status": "FAIL",
+      "isSubmitted": true,
       "violationsCount": 0,
       "tenantId": "default",
-      "tenant_id": "default"
+      "tenant_id": "default",
+      "submitTime": "2026-09-04T14:45:00.000Z"
     },
     {
       "id": "attp-1788532253443",
@@ -1422,6 +1447,45 @@
       "violationsCount": 0,
       "tenantId": "default",
       "tenant_id": "default"
+    },
+    {
+      "id": "attp-1789144322340",
+      "examId": "ex-1",
+      "studentId": "s-1",
+      "startTime": "2026-09-11T16:32:02.340Z",
+      "answers": {},
+      "score": 0,
+      "percentage": 0,
+      "status": "FAIL",
+      "isSubmitted": true,
+      "violationsCount": 0,
+      "tenantId": "default",
+      "tenant_id": "default",
+      "gradePoint": "F",
+      "remarks": "Requires intensive revision and conceptual guidance.",
+      "submitTime": "2026-09-11T16:53:36.038Z"
+    },
+    {
+      "id": "attp-1789145651625",
+      "examId": "ex-1",
+      "studentId": "s-1",
+      "startTime": "2026-09-11T16:54:11.625Z",
+      "answers": {
+        "q-1": "x = 5",
+        "q-2": "True",
+        "q-3": "29",
+        "q-4": "bbnn"
+      },
+      "score": 85,
+      "percentage": 85,
+      "status": "PASS",
+      "isSubmitted": true,
+      "violationsCount": 0,
+      "tenantId": "default",
+      "tenant_id": "default",
+      "gradePoint": "A+",
+      "remarks": "Outstanding performance! Exceptional analytical proficiency demonstrated.",
+      "submitTime": "2026-09-11T16:54:26.985Z"
     }
   ],
   "lessonNotes": [
@@ -1515,7 +1579,7 @@
       "createdAt": "2026-07-22T10:06:28.552Z"
     },
     {
-      "id": "ten-cxwcub5",
+      "id": "ten-jide",
       "name": "jide",
       "subdomain": "jide",
       "logoUrl": "",
