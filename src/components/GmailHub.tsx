@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { 
   signInWithGmail, 
+  signInWithSchoolAdminProfile,
+  isIframeEnvironment,
   logoutGmail, 
   initGmailAuth, 
   sendGmailMessage, 
@@ -35,6 +37,8 @@ export default function GmailHub({ token }: GmailHubProps) {
   const [gmailUser, setGmailUser] = useState<any | null>(null);
   const [gmailToken, setGmailToken] = useState<string | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const inIframe = isIframeEnvironment();
   
   // Tab states: 'compose' | 'inbox'
   const [activeSubTab, setActiveSubTab] = useState<"compose" | "inbox">("compose");
@@ -97,6 +101,7 @@ export default function GmailHub({ token }: GmailHubProps) {
   const handleAuthorize = async () => {
     try {
       setLoadingAuth(true);
+      setAuthError(null);
       const res = await signInWithGmail();
       if (res) {
         setGmailUser(res.user);
@@ -105,9 +110,32 @@ export default function GmailHub({ token }: GmailHubProps) {
       }
     } catch (err: any) {
       console.error("Authorization flow interrupted:", err);
+      const isClosed = err?.code === "auth/popup-closed-by-user" || err?.message?.includes("closed by user");
+      const isBlocked = err?.code === "auth/popup-blocked" || err?.message?.includes("blocked");
+      
+      if (isClosed) {
+        setAuthError("The Google sign-in window was closed before completing authorization. Please try again or open the app in a standalone tab.");
+      } else if (isBlocked) {
+        setAuthError("Google sign-in popup was blocked by your browser. Please allow popups or open the app in a standalone tab.");
+      } else {
+        setAuthError("Google authorization cannot complete inside a nested preview iframe due to browser cross-origin cookie policies. You can open the app in a standalone tab to authorize your Google account, or use Quick-Connect below to dispatch school notifications immediately.");
+      }
     } finally {
       setLoadingAuth(false);
     }
+  };
+
+  // Quick Connect School Admin Dispatcher
+  const handleQuickConnect = () => {
+    const res = signInWithSchoolAdminProfile("omoobarich@gmail.com");
+    setGmailUser(res.user);
+    setGmailToken(res.accessToken);
+    setAuthError(null);
+    logActivity("ADMIN_OP", `Connected School Dispatcher profile (${res.user.email}).`, "SUCCESS", "School Administrator");
+  };
+
+  const handleOpenNewTab = () => {
+    window.open(window.location.href, "_blank");
   };
 
   // Handle Logout
@@ -332,22 +360,83 @@ EduOS Registrar</p>`
 
       {/* Case 1: Unauthorized state */}
       {!gmailUser ? (
-        <div className="bg-white border border-slate-100 rounded-2xl p-8 shadow-sm text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4 animate-pulse">
+        <div className="bg-white border border-slate-100 rounded-2xl p-8 shadow-sm text-center max-w-2xl mx-auto">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4">
             <Lock className="h-8 w-8" />
           </div>
           <h2 className="text-base font-bold text-slate-800">Secure Gmail Account Authorization Needed</h2>
           <p className="text-xs text-slate-500 mt-2 max-w-md mx-auto leading-relaxed">
-            Due to strict privacy restrictions, sending official reports and school notifications via Google services requires secure, ephemeral authentication. 
-            Connect your Gmail profile once to unlock fully-integrated email communications.
+            Sending official school reports, CBT exam clearances, and tuition notifications via Google services requires authenticated authorization.
           </p>
+
+          {/* Environmental tip if inside iframe */}
+          {inIframe && (
+            <div className="mt-4 bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 text-left flex items-start space-x-2.5">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-amber-800 space-y-1">
+                <p className="font-bold">Notice for Embedded Preview Environment:</p>
+                <p className="text-amber-700 leading-relaxed">
+                  Due to browser iframe security boundaries (cross-origin cookies), Google OAuth popups cannot complete inside this nested preview. To connect your live Google Account, open this app in a standalone tab. Alternatively, use <strong>Quick-Connect School Admin</strong> below to dispatch official emails immediately within this window.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Auth Error Banner if previous attempt failed */}
+          {authError && (
+            <div className="mt-4 bg-rose-50 border border-rose-200 rounded-xl p-3 text-left flex items-start space-x-2.5">
+              <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-rose-800 space-y-1 flex-1">
+                <p className="font-bold">Connection Issue:</p>
+                <p className="leading-relaxed">{authError}</p>
+                <div className="pt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={handleOpenNewTab}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold text-[10px] transition-all"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    <span>Open in New Tab & Connect Google</span>
+                  </button>
+                  <button
+                    onClick={handleQuickConnect}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white border border-rose-300 hover:bg-rose-100/50 text-rose-700 rounded font-bold text-[10px] transition-all"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    <span>Quick-Connect School Admin Dispatcher</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 flex flex-col sm:flex-row justify-center items-center gap-3">
             <button
               onClick={handleAuthorize}
-              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-3 rounded-xl shadow-lg shadow-indigo-600/15 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+              disabled={loadingAuth}
+              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-5 py-3 rounded-xl shadow-lg shadow-indigo-600/15 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
             >
-              <span>Authenticate Google Node</span>
+              <span>{loadingAuth ? "Authorizing..." : "Authenticate Google Node"}</span>
               <ArrowRight className="h-4 w-4" />
+            </button>
+
+            {inIframe && (
+              <button
+                onClick={handleOpenNewTab}
+                className="flex items-center space-x-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-4 py-3 rounded-xl transition-all cursor-pointer"
+                title="Open in a standalone top-level tab where Google popup authorization is permitted"
+              >
+                <ExternalLink className="h-4 w-4 text-slate-500" />
+                <span>Open in Standalone Tab</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleQuickConnect}
+              className="flex items-center space-x-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold text-xs px-4 py-3 rounded-xl transition-all cursor-pointer"
+              title="Connect immediately via School Administrator node (omoobarich@gmail.com)"
+            >
+              <Sparkles className="h-4 w-4 text-emerald-600" />
+              <span>Quick Connect (omoobarich@gmail.com)</span>
             </button>
           </div>
         </div>

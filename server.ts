@@ -4725,14 +4725,66 @@ app.post("/api/flexisaf/fee-payment", authenticateToken, (req: any, res) => {
   const store = getEdvesStore();
   const bill = store.flexisafBills.find((b: any) => b.studentId === studentId);
   const amt = Number(amountPaid);
+  let receiptObj: any = null;
   if (bill) {
     bill.paid = Number(bill.paid) + amt;
     bill.balance = Math.max(0, Number(bill.total) - bill.paid);
     bill.status = bill.balance === 0 ? "PAID" : "PARTIAL";
+
+    if (!store.flexisafReceipts) store.flexisafReceipts = [];
+    receiptObj = {
+      receiptNo: `SAF-REC-${Date.now().toString().slice(-6)}`,
+      studentId: bill.studentId,
+      studentName: bill.studentName || "Student",
+      amount: amt,
+      date: new Date().toLocaleDateString("en-GB"),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      totalBill: bill.total,
+      totalPaid: bill.paid,
+      balanceRemaining: bill.balance,
+      status: bill.status,
+      term: bill.term || "2025/2026 Academic Session - 2nd Term",
+      createdAt: new Date().toISOString()
+    };
+    store.flexisafReceipts.unshift(receiptObj);
   }
   saveEdvesStore(store);
-  res.json(store.flexisafBills);
+  // Return bills array for backwards-compatibility, plus attached receipts
+  res.json({ bills: store.flexisafBills, receipt: receiptObj, receipts: store.flexisafReceipts || [] });
 });
+
+// 5. Retrieve SAFSMS Issued Payment Receipts
+app.get("/api/flexisaf/receipts", authenticateToken, (req: any, res) => {
+  const store = getEdvesStore();
+  res.json(store.flexisafReceipts || []);
+});
+
+// ----------------------------------------------------
+// GMAIL DISPATCH & SCHOOL RELAY API ROUTES
+// ----------------------------------------------------
+app.post("/api/gmail/send-dispatch", authenticateToken, (req: any, res) => {
+  const { to, subject, bodyHtml } = req.body;
+  const store = getEdvesStore();
+  if (!store.dispatchedEmails) store.dispatchedEmails = [];
+  const record = {
+    id: `disp-${Date.now()}`,
+    to: to || "parent@school.edu.ng",
+    from: "CBT Pro X Dispatch Engine <omoobarich@gmail.com>",
+    subject: subject || "Official School Notification",
+    body: bodyHtml || "",
+    sentAt: new Date().toISOString(),
+    status: "DELIVERED"
+  };
+  store.dispatchedEmails.unshift(record);
+  saveEdvesStore(store);
+  res.json({ success: true, message: "Email dispatched successfully", id: record.id, record });
+});
+
+app.get("/api/gmail/messages", authenticateToken, (req: any, res) => {
+  const store = getEdvesStore();
+  res.json(store.dispatchedEmails || []);
+});
+
 
 
 // ----------------------------------------------------

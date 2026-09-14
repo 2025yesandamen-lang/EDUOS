@@ -520,27 +520,46 @@ export default function DriveHub({ token }: DriveHubProps) {
       {errorMsg && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start space-x-3 shadow-sm">
           <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-          <div className="text-xs text-rose-800 font-semibold">{errorMsg}</div>
+          <div className="text-xs text-rose-800 font-semibold flex-1">
+            <p>{errorMsg}</p>
+            <div className="mt-2.5 flex items-center space-x-2">
+              <button
+                onClick={() => window.open(window.location.href, "_blank")}
+                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs shadow-sm transition-all"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Open in Standalone Tab to Authorize</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Case 1: Unauthorized state */}
       {!driveUser ? (
-        <div className="bg-white border border-slate-100 rounded-2xl p-8 shadow-sm text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4 animate-pulse">
+        <div className="bg-white border border-slate-100 rounded-2xl p-8 shadow-sm text-center max-w-2xl mx-auto">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4">
             <Lock className="h-8 w-8" />
           </div>
           <h2 className="text-base font-bold text-slate-800">Secure Storage Node Authorization Required</h2>
           <p className="text-xs text-slate-500 mt-2 max-w-md mx-auto leading-relaxed">
             Connect your institutional or personal Google Workspace Drive folder to view, manage, and upload class timetables, syllabus notes, and export school ERP registers directly to your storage space.
           </p>
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex flex-col sm:flex-row justify-center items-center gap-3">
             <button
               onClick={handleAuthorize}
               className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-3 rounded-xl shadow-lg shadow-indigo-600/15 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
             >
               <span>Connect Google Drive</span>
               <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => window.open(window.location.href, "_blank")}
+              className="flex items-center space-x-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-4 py-3 rounded-xl transition-all cursor-pointer"
+              title="Open in a standalone top-level tab where Google popup authorization is permitted"
+            >
+              <ExternalLink className="h-4 w-4 text-slate-500" />
+              <span>Open in Standalone Tab</span>
             </button>
           </div>
         </div>

@@ -27,9 +27,11 @@ import {
   Clock,
   BookOpen,
   Wifi,
-  AlertTriangle
+  AlertTriangle,
+  Receipt
 } from "lucide-react";
 import { motion } from "motion/react";
+import { printStaffPayslip, printTuitionReceipt, TuitionReceiptData, PayslipData } from "../utils/printReceipt";
 
 interface EdvesERPModuleProps {
   token: string;
@@ -107,6 +109,7 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
   const [fsRecordPayStudentId, setFsRecordPayStudentId] = useState<string>("");
   const [fsRecordPayAmount, setFsRecordPayAmount] = useState<string>("");
   const [fsReceipt, setFsReceipt] = useState<any | null>(null);
+  const [showReceiptModal, setShowReceiptModal] = useState<boolean>(false);
   const [fsSmsLogs, setFsSmsLogs] = useState<string[]>([]);
   
   // FlexiSAF Lesson Review state
@@ -400,9 +403,9 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
 
   const handlePrintPayslip = (payslip: any) => {
     setSelectedPayslip(payslip);
-    setTimeout(() => {
-      window.print();
-    }, 500);
+    const teacher = staff.find(t => t.id === payslip.staffId);
+    showFeedback(`Printing official staff salary voucher for ${teacher?.name || 'Faculty Member'}...`);
+    printStaffPayslip(payslip, teacher);
   };
 
   // ====================================================
@@ -592,27 +595,63 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
       });
       if (res.ok) {
         const data = await res.json();
-        setFlexisafBills(data);
+        const updatedBills = Array.isArray(data) ? data : (data.bills || []);
+        setFlexisafBills(updatedBills);
         
         // Generate printable receipt
         const stud = students.find(s => s.id === fsRecordPayStudentId);
-        const bill = data.find((b: any) => b.studentId === fsRecordPayStudentId);
+        const bill = updatedBills.find((b: any) => b.studentId === fsRecordPayStudentId);
         
-        setFsReceipt({
-          receiptNo: `SAF-REC-${Date.now().toString().slice(-6)}`,
+        const receiptData: TuitionReceiptData = {
+          receiptNo: data.receipt?.receiptNo || `SAF-REC-${Date.now().toString().slice(-6)}`,
+          studentId: fsRecordPayStudentId,
           studentName: stud?.name || "Student",
+          regNo: stud?.regNo || `STU-${fsRecordPayStudentId}`,
+          className: stud?.className || "Senior Secondary",
           amount: amt,
-          date: new Date().toLocaleDateString(),
-          balanceRemaining: bill?.balance || 0,
-          status: bill?.status || "PARTIAL"
-        });
+          date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          totalBill: bill?.total || 120000,
+          totalPaid: bill?.paid || amt,
+          balanceRemaining: bill?.balance ?? 0,
+          status: bill?.status || (bill?.balance === 0 ? "PAID" : "PARTIAL"),
+          term: bill?.term || "2025/2026 Academic Session - 2nd Term"
+        };
         
+        setFsReceipt(receiptData);
+        setShowReceiptModal(true);
         setFsRecordPayAmount("");
         showFeedback(`Tuition payment of ₦${amt.toLocaleString()} captured. Receipt generated!`);
+        // Trigger high-fidelity hardcopy receipt printing
+        printTuitionReceipt(receiptData, stud, bill);
       }
     } catch (err) {
       console.error(err);
     }
+  };
+
+  // Handle Print Tuition Receipt on-demand for any student in the debt tracker
+  const handlePrintStudentReceipt = (b: any) => {
+    const stud = students.find(s => s.id === b.studentId);
+    const receiptData: TuitionReceiptData = {
+      receiptNo: `SAF-REC-${Date.now().toString().slice(-6)}`,
+      studentId: b.studentId,
+      studentName: b.studentName || stud?.name || "Student",
+      regNo: stud?.regNo || `STU-${b.studentId}`,
+      className: stud?.className || "Senior Secondary",
+      amount: b.paid > 0 ? b.paid : b.total,
+      date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      totalBill: b.total,
+      totalPaid: b.paid,
+      balanceRemaining: b.balance,
+      status: b.status,
+      term: b.term || "2025/2026 Academic Session - 2nd Term"
+    };
+    setFsReceipt(receiptData);
+    setShowReceiptModal(true);
+    showFeedback(`Printing official SAFSMS tuition receipt for ${receiptData.studentName}...`);
+    printTuitionReceipt(receiptData, stud, b);
   };
 
   // Send SMS Fee Reminder
@@ -810,7 +849,7 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
           }`}
         >
           <Sliders className="h-4 w-4 text-violet-600" />
-          <span>Academic Administration & Gradebook</span>
+          <span>SAFSMS Suite (Tuition Debt & CA Gradebook)</span>
         </button>
       </div>
 
@@ -2037,18 +2076,21 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
             {activeSubTab === "flexisaf" && (
               <div className="space-y-6">
                 <div className="bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-100 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <h3 className="text-sm font-bold text-violet-800 flex items-center gap-1.5">
-                      <Sliders className="h-4 w-4" />
-                      <span>EduOS Cognitive & Academic Administrative Suite</span>
-                    </h3>
-                    <p className="text-xs text-violet-700/80">
-                      Auto-compiled cognitive CA gradebooks, tuition debtor ledgers with receipt printing, lesson plan approval queues, and clash-free timetables.
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="bg-violet-600 text-white font-black text-[10px] px-2 py-0.5 rounded tracking-wider uppercase font-mono">SAFSMS</span>
+                      <h3 className="text-sm font-bold text-violet-900 flex items-center gap-1.5">
+                        <Sliders className="h-4 w-4 text-violet-600" />
+                        <span>Smart Application For School Management Software (FlexiSAF)</span>
+                      </h3>
+                    </div>
+                    <p className="text-xs text-violet-700/90 leading-relaxed max-w-2xl">
+                      Automating school tuition debt tracking, instant hardcopy receipt printing, WAEC/JAMB continuous assessment (CA) gradebooks, and collision-free timetabling.
                     </p>
                   </div>
-                  <div className="flex items-center space-x-2 bg-white px-3 py-1.5 border border-violet-200/60 rounded-xl text-[10px] font-mono text-violet-600 font-bold shadow-sm">
+                  <div className="flex items-center space-x-2 bg-white px-3 py-1.5 border border-violet-200/60 rounded-xl text-[10px] font-mono text-violet-700 font-bold shadow-sm whitespace-nowrap">
                     <Award className="h-3.5 w-3.5 text-violet-500 animate-spin" />
-                    <span>Compiled WAEC/JAMB Standards</span>
+                    <span>EduOS Verified Bursary Engine</span>
                   </div>
                 </div>
 
@@ -2218,16 +2260,26 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
                                 </span>
                               </td>
                               <td className="p-2.5">
-                                {b.balance > 0 && (
+                                <div className="flex items-center space-x-1.5">
                                   <button
-                                    onClick={() => handleFsSendReminder(b.studentId)}
-                                    className="p-1 text-slate-400 hover:text-rose-500 rounded border border-slate-200 hover:bg-rose-50/50 transition-all text-[10px] font-bold flex items-center space-x-1"
-                                    title="Dispatched Debt Warning Notification SMS"
+                                    onClick={() => handlePrintStudentReceipt(b)}
+                                    className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg border border-indigo-200 text-[10px] font-bold flex items-center space-x-1 transition-all cursor-pointer"
+                                    title="Print Official SAFSMS Tuition Receipt"
                                   >
-                                    <Smartphone className="h-3 w-3" />
-                                    <span>Remind</span>
+                                    <Receipt className="h-3 w-3" />
+                                    <span>Receipt</span>
                                   </button>
-                                )}
+                                  {b.balance > 0 && (
+                                    <button
+                                      onClick={() => handleFsSendReminder(b.studentId)}
+                                      className="p-1 text-slate-400 hover:text-rose-500 rounded-lg border border-slate-200 hover:bg-rose-50/50 transition-all text-[10px] font-bold flex items-center space-x-1 cursor-pointer"
+                                      title="Dispatched Debt Warning Notification SMS"
+                                    >
+                                      <Smartphone className="h-3 w-3" />
+                                      <span>Remind</span>
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -2239,24 +2291,39 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
                     {fsReceipt && (
                       <div className="bg-indigo-50/30 border border-dashed border-indigo-200 p-4 rounded-xl space-y-3" id="fs-invoice-receipt">
                         <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
-                          <span>SAFSMS Official Payment Receipt</span>
-                          <span>Receipt ID: {fsReceipt.receiptNo}</span>
+                          <span className="flex items-center space-x-1.5">
+                            <Receipt className="h-3.5 w-3.5 text-indigo-600" />
+                            <span>SAFSMS Official Payment Receipt</span>
+                          </span>
+                          <span className="font-mono text-[10px] text-slate-500">ID: {fsReceipt.receiptNo}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 font-mono">
-                          <div>Student Name: <span className="font-bold text-slate-800">{fsReceipt.studentName}</span></div>
-                          <div>Transaction Date: <span>{fsReceipt.date}</span></div>
+                          <div>Pupil: <span className="font-bold text-slate-800">{fsReceipt.studentName}</span></div>
+                          <div>Date: <span>{fsReceipt.date}</span></div>
                           <div>Amount Received: <span className="font-bold text-emerald-600">₦{fsReceipt.amount.toLocaleString()}</span></div>
-                          <div>Remaining session Balance: <span className="font-bold text-rose-600">₦{fsReceipt.balanceRemaining.toLocaleString()}</span></div>
+                          <div>Remaining Balance: <span className="font-bold text-rose-600">₦{fsReceipt.balanceRemaining.toLocaleString()}</span></div>
                         </div>
                         <div className="flex justify-between items-center pt-2 border-t border-indigo-100/60 text-[10px]">
-                          <span className="text-slate-400 font-mono">Status: {fsReceipt.status}</span>
-                          <button 
-                            onClick={() => window.print()}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded flex items-center space-x-1"
-                          >
-                            <Printer className="h-3 w-3" />
-                            <span>Print Receipt</span>
-                          </button>
+                          <span className="text-slate-500 font-mono font-bold">Status: {fsReceipt.status}</span>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => setShowReceiptModal(true)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg text-[10px] transition-all cursor-pointer"
+                            >
+                              <span>View Slip</span>
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const stud = students.find(s => s.id === fsReceipt.studentId);
+                                const bill = flexisafBills.find(b => b.studentId === fsReceipt.studentId);
+                                printTuitionReceipt(fsReceipt, stud, bill);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded-lg flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                            >
+                              <Printer className="h-3 w-3" />
+                              <span>Print Hardcopy Receipt</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2490,7 +2557,7 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
 
       {/* Printable Payslip Modal/Invoice Layout */}
       {selectedPayslip && (
-        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm print:hidden">
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative border border-slate-200">
             <button 
               onClick={() => setSelectedPayslip(null)}
@@ -2557,16 +2624,95 @@ export default function EdvesERPModule({ token }: EdvesERPModuleProps) {
                     <div className="pt-4 border-t border-slate-100 text-center space-y-2">
                       <p className="text-[9px] text-slate-400 font-mono">Payslip ID: {selectedPayslip.id} • Issued At: {new Date(selectedPayslip.createdAt).toLocaleDateString()}</p>
                       <button
-                        onClick={() => window.print()}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center justify-center space-x-1.5 mx-auto shadow-md shadow-indigo-100 transition-colors"
+                        onClick={() => {
+                          const tea = staff.find(t => t.id === selectedPayslip.staffId);
+                          printStaffPayslip(selectedPayslip, tea);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-center space-x-1.5 mx-auto shadow-md shadow-indigo-100 transition-colors cursor-pointer"
                       >
                         <Printer className="h-3.5 w-3.5" />
-                        <span>Print Hardcopy Payslip</span>
+                        <span>Print Hardcopy Payslip Voucher</span>
                       </button>
                     </div>
                   </div>
                 );
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Official SAFSMS Tuition Receipt Voucher Modal */}
+      {showReceiptModal && fsReceipt && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative border border-indigo-100">
+            <button 
+              onClick={() => setShowReceiptModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-4 font-sans">
+              <div className="text-center border-b border-indigo-100 pb-3">
+                <div className="inline-flex items-center space-x-1.5 bg-indigo-50 px-3 py-1 rounded-full text-indigo-700 text-[10px] font-bold uppercase tracking-wider mb-2 font-mono">
+                  <Receipt className="h-3.5 w-3.5" />
+                  <span>SAFSMS Official Bursary Receipt</span>
+                </div>
+                <h3 className="text-base font-extrabold text-slate-800 uppercase tracking-wide">CBT PRO X ACADEMY</h3>
+                <p className="text-[10px] text-slate-500 font-mono">Receipt No: {fsReceipt.receiptNo} • {fsReceipt.date}</p>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 grid grid-cols-2 gap-2.5 text-xs">
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-mono">Pupil Name</span>
+                  <span className="font-bold text-slate-800">{fsReceipt.studentName}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-mono">Admission No</span>
+                  <span className="font-bold text-slate-800 font-mono">{fsReceipt.regNo || `STU-${fsReceipt.studentId}`}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-mono">Amount Paid</span>
+                  <span className="font-extrabold text-emerald-600 font-mono">₦{fsReceipt.amount.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-mono">Remaining Debt</span>
+                  <span className={`font-extrabold font-mono ${fsReceipt.balanceRemaining === 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {fsReceipt.balanceRemaining === 0 ? "CLEARED (₦0)" : `₦${fsReceipt.balanceRemaining.toLocaleString()}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-xl text-center text-xs font-bold border ${
+                fsReceipt.balanceRemaining === 0
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-amber-50 text-amber-800 border-amber-200"
+              }`}>
+                {fsReceipt.balanceRemaining === 0 
+                  ? "✓ FULLY CLEARED — PERMITTED FOR CBT EXAMINATIONS" 
+                  : `⚠ PARTIAL PAYMENT — BALANCE ₦${fsReceipt.balanceRemaining.toLocaleString()} OUTSTANDING`}
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
+                <button
+                  onClick={() => {
+                    const stud = students.find(s => s.id === fsReceipt.studentId);
+                    const bill = flexisafBills.find(b => b.studentId === fsReceipt.studentId);
+                    printTuitionReceipt(fsReceipt, stud, bill);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+                >
+                  <Printer className="h-4 w-4" />
+                  <span>Print Official Hardcopy Receipt</span>
+                </button>
+                <button
+                  onClick={() => setShowReceiptModal(false)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl transition-all cursor-pointer"
+                >
+                  <span>Close</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
