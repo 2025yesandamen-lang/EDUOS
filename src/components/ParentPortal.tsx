@@ -282,7 +282,7 @@ export default function ParentPortal({ activeSection, token, user }: ParentPorta
             </div>
 
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px] text-slate-400 font-mono leading-relaxed">
-              [SYSTEM VERIFICATION] Assessor Engine model: gemini-3.5-flash • Full Context Isolation Enabled.
+              [SYSTEM VERIFICATION] Assessor Engine model: gemini-3.8-flash (with multi-model failover) • Full Context Isolation Enabled.
             </div>
           </div>
 

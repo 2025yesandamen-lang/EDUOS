@@ -19,7 +19,10 @@ import {
   Download,
   Layers,
   Search,
-  Filter
+  Filter,
+  Upload,
+  FileUp,
+  Check
 } from "lucide-react";
 import { Exam, Question, Student, AttendanceRecord } from "../types";
 import ReportExportModal from "./ReportExportModal";
@@ -79,6 +82,10 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
   const [aiQty, setAiQty] = useState("3");
   const [aiDifficulty, setAiDifficulty] = useState("Medium");
   const [aiSuccessLog, setAiSuccessData] = useState<any | null>(null);
+
+  // Question Creation Tool Switch & Bulk Upload
+  const [questionToolTab, setQuestionToolTab] = useState<"manual" | "ai" | "bulk">("manual");
+  const [bulkQuestionsText, setBulkQuestionsText] = useState("");
 
   // Attendance ERP logging States
   const [studentsList, setStudentsList] = useState<Student[]>([]);
@@ -423,13 +430,15 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
     }
   }, [attendanceDate]);
 
-  // Create exam Action
-  const handleCreateExam = async (e: React.FormEvent) => {
+  // Create exam Action (Draft or Instant Publish)
+  const handleCreateExam = async (e: React.FormEvent, targetStatus: "DRAFT" | "PUBLISHED" = "DRAFT") => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
     try {
       setLoading(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
       const res = await fetch("/api/exams", {
         method: "POST",
         headers: {
@@ -441,14 +450,20 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
           description: newDesc,
           duration: Number(newDuration),
           passingScore: Number(newPassingScore),
-          status: "DRAFT"
+          status: targetStatus
         })
       });
       if (res.ok) {
-        setSuccessMsg(`Exam title "${newTitle}" created in draft status.`);
+        const createdExam = await res.json();
+        setSuccessMsg(targetStatus === "PUBLISHED" 
+          ? `Assessment "${newTitle}" created and published live to Student CBT portal!` 
+          : `Draft evaluation "${newTitle}" created! You can now add questions below and click 'Confirm & Upload Assessment to CBT Portal' when ready.`);
         setNewTitle("");
         setNewDesc("");
-        fetchExams();
+        await fetchExams();
+        if (createdExam && createdExam.id) {
+          await fetchExamDetails(createdExam.id);
+        }
       } else {
         setErrorMsg("Failed to initialize draft exam template.");
       }
@@ -459,10 +474,12 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
     }
   };
 
-  // Publish / Close Exam Action
-  const handleUpdateExamStatus = async (examId: string, newStatus: "PUBLISHED" | "CLOSED") => {
+  // Publish / Revert / Close Exam Action
+  const handleUpdateExamStatus = async (examId: string, newStatus: "PUBLISHED" | "DRAFT" | "CLOSED") => {
     try {
       setLoading(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
       const res = await fetch(`/api/exams/${examId}`, {
         method: "PUT",
         headers: {
@@ -472,14 +489,17 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
         body: JSON.stringify({ status: newStatus })
       });
       if (res.ok) {
-        setSuccessMsg(`Exam status updated to ${newStatus}.`);
-        fetchExams();
+        setSuccessMsg(newStatus === "PUBLISHED" 
+          ? "🎉 Assessment evaluation confirmed & uploaded live to Student CBT Portal!" 
+          : `Assessment status changed to ${newStatus}.`);
+        await fetchExams();
         if (selectedExam && selectedExam.id === examId) {
-          fetchExamDetails(examId);
+          await fetchExamDetails(examId);
         }
       }
     } catch (e) {
       console.error(e);
+      setErrorMsg("Failed to update assessment status.");
     } finally {
       setLoading(false);
     }
@@ -501,6 +521,118 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete Question Action
+  const handleDeleteQuestion = async (questionId: string) => {
+    if (!selectedExam) return;
+    if (!confirm("Are you sure you want to remove this question from the assessment bank?")) return;
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+      const res = await fetch(`/api/exams/${selectedExam.id}/questions/${questionId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSuccessMsg("Question deleted from assessment bank.");
+        await fetchExamDetails(selectedExam.id);
+        await fetchExams();
+      } else {
+        setErrorMsg("Failed to delete question.");
+      }
+    } catch (err) {
+      setErrorMsg("Error deleting question.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Bulk Upload Questions Action
+  const handleBulkUploadQuestions = async () => {
+    if (!selectedExam || !bulkQuestionsText.trim()) return;
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+
+      let parsedQuestions: any[] = [];
+      const trimmed = bulkQuestionsText.trim();
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          parsedQuestions = JSON.parse(trimmed);
+        } catch (e) {
+          setErrorMsg("Failed to parse JSON questions array. Please verify formatting.");
+          return;
+        }
+      } else {
+        // Line-based question parser
+        const blocks = trimmed.split(/\n\s*\n+/);
+        for (const block of blocks) {
+          const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
+          if (!lines.length) continue;
+          let text = "";
+          let opts: string[] = [];
+          let ans = "";
+          let score = 10;
+          let type: "MCQ" | "TRUE_FALSE" = "MCQ";
+
+          for (const line of lines) {
+            if (/^(q|question)\s*[:\.]/i.test(line) || (!text && !/^[a-d]\s*[\)\.\:]/i.test(line))) {
+              text = line.replace(/^(q|question)\s*[:\.]/i, "").trim();
+            } else if (/^[a-d]\s*[\)\.\:]/i.test(line)) {
+              opts.push(line.replace(/^[a-d]\s*[\)\.\:]/i, "").trim());
+            } else if (/^(ans|answer|correct)\s*[:\.]/i.test(line)) {
+              ans = line.replace(/^(ans|answer|correct)\s*[:\.]/i, "").trim();
+            } else if (/^points?\s*[:\.]/i.test(line)) {
+              score = Number(line.replace(/^points?\s*[:\.]/i, "").trim()) || 10;
+            }
+          }
+
+          if (text) {
+            if (opts.length === 0 && (ans.toLowerCase() === "true" || ans.toLowerCase() === "false")) {
+              type = "TRUE_FALSE";
+              opts = ["True", "False"];
+            }
+            parsedQuestions.push({
+              text,
+              type,
+              options: opts.length >= 2 ? opts : ["Option A", "Option B", "Option C", "Option D"],
+              answer: ans || opts[0] || "True",
+              scorePoints: score
+            });
+          }
+        }
+      }
+
+      if (parsedQuestions.length === 0) {
+        setErrorMsg("Could not parse any questions. Please check the sample format.");
+        return;
+      }
+
+      const res = await fetch(`/api/exams/${selectedExam.id}/questions/bulk`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ questions: parsedQuestions })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setSuccessMsg(`🎉 Successfully uploaded and saved ${parsedQuestions.length} questions to ${selectedExam.title}!`);
+        setBulkQuestionsText("");
+        await fetchExamDetails(selectedExam.id);
+        await fetchExams();
+      } else {
+        setErrorMsg(data.message || "Bulk questions upload failed.");
+      }
+    } catch (e: any) {
+      setErrorMsg("Failed to upload bulk questions: " + (e.message || e));
     } finally {
       setLoading(false);
     }
@@ -543,14 +675,15 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
       });
 
       if (res.ok) {
-        setSuccessMsg("Question registered to assessment index.");
+        setSuccessMsg(`Question uploaded and stored in assessment bank! Current total: ${examQuestions.length + 1} questions.`);
         setQText("");
         setQOption1("");
         setQOption2("");
         setQOption3("");
         setQOption4("");
         setQCorrectAnswer("");
-        fetchExamDetails(selectedExam.id);
+        await fetchExamDetails(selectedExam.id);
+        await fetchExams();
       } else {
         setErrorMsg("Failed to upload question to assessment.");
       }
@@ -589,9 +722,9 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
       const data = await res.json();
       if (res.ok) {
         setAiSuccessData(data);
-        setSuccessMsg(`AI assessor completed content generation for ${aiSubject}!`);
-        fetchExamDetails(selectedExam.id);
-        fetchExams();
+        setSuccessMsg(data.message || `AI assessor generated and uploaded questions for ${aiSubject}!`);
+        await fetchExamDetails(selectedExam.id);
+        await fetchExams();
       } else {
         setErrorMsg(data.message || "Failed to utilize Gemini question designer.");
       }
@@ -807,13 +940,25 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
                     </div>
                   </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2.5 rounded-lg transition-all shadow-sm"
-                  >
-                    Initialize Draft Layout
-                  </button>
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      onClick={(e) => handleCreateExam(e, "DRAFT")}
+                      className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs py-2.5 px-2 rounded-xl transition-all shadow-sm flex items-center justify-center space-x-1"
+                    >
+                      <span>Save as Draft</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={(e) => handleCreateExam(e, "PUBLISHED")}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-2 rounded-xl transition-all shadow-sm flex items-center justify-center space-x-1"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      <span>Upload & Publish</span>
+                    </button>
+                  </div>
                 </form>
               </div>
             </div>
@@ -823,6 +968,60 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
               {selectedExam ? (
                 <div className="space-y-6">
                   
+                  {/* Draft Confirmation / Live Status Banner */}
+                  {selectedExam.status === "DRAFT" ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                      <div className="flex items-start space-x-3">
+                        <div className="p-2 bg-amber-100 text-amber-700 rounded-xl mt-0.5">
+                          <AlertTriangle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-extrabold text-xs text-amber-900 uppercase tracking-wide">Draft Assessment</span>
+                            <span className="text-[10px] bg-amber-200/80 text-amber-800 px-2 py-0.5 rounded font-mono font-bold">{examQuestions.length} Questions Saved</span>
+                          </div>
+                          <p className="text-xs text-amber-800 mt-1">
+                            Questions uploaded below are saved in your assessment bank. Click "Confirm & Upload" to publish this assessment to the student CBT portal.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateExamStatus(selectedExam.id, "PUBLISHED")}
+                        disabled={loading}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all shadow flex items-center justify-center space-x-1.5 shrink-0"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        <span>Confirm & Upload Assessment</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                      <div className="flex items-start space-x-3">
+                        <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl mt-0.5">
+                          <CheckCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-extrabold text-xs text-emerald-900 uppercase tracking-wide">Confirmed & Published Live</span>
+                            <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded font-mono font-bold">{examQuestions.length} Active Questions</span>
+                          </div>
+                          <p className="text-xs text-emerald-800 mt-1">
+                            This assessment is currently active and accessible to enrolled students on their examination portal.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateExamStatus(selectedExam.id, "DRAFT")}
+                        disabled={loading}
+                        className="text-slate-600 hover:text-slate-900 bg-white border border-slate-200 font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shrink-0 shadow-sm"
+                      >
+                        Revert to Draft Mode
+                      </button>
+                    </div>
+                  )}
+
                   {/* Exam Settings Control & Info Card */}
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-3">
@@ -910,207 +1109,333 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
 
                   {examTab === "questions" ? (
                     <>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    
-                    {/* Manual Question adding workbench */}
-                    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                      <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-1.5 border-b border-slate-100 pb-2">
-                        <FileText className="h-4 w-4 text-indigo-500" />
-                        <span>Manual Assessment Writer</span>
-                      </h3>
-
-                      <form onSubmit={handleCreateQuestion} className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase">Assessed Question prompt</label>
-                          <textarea
-                            placeholder="Type the exam question instruction..."
-                            value={qText}
-                            onChange={(e) => setQText(e.target.value)}
-                            className="w-full border border-slate-200 p-2.5 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 h-16"
-                            required
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase">Question Format</label>
-                            <select
-                              value={qType}
-                              onChange={(e: any) => setQType(e.target.value)}
-                              className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800"
-                              required
-                            >
-                              <option value="MCQ">Multiple Choice MCQ</option>
-                              <option value="TRUE_FALSE">True / False</option>
-                              <option value="ESSAY">Theory / Essay</option>
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase">Weight Score (Points)</label>
-                            <input
-                              type="number"
-                              value={qPoints}
-                              onChange={(e) => setQPoints(e.target.value)}
-                              className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 font-mono font-bold"
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        {qType === "MCQ" && (
-                          <div className="space-y-2 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Configure MCQ choices</span>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input type="text" placeholder="Option A" value={qOption1} onChange={(e)=>setQOption1(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
-                              <input type="text" placeholder="Option B" value={qOption2} onChange={(e)=>setQOption2(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
-                              <input type="text" placeholder="Option C" value={qOption3} onChange={(e)=>setQOption3(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
-                              <input type="text" placeholder="Option D" value={qOption4} onChange={(e)=>setQOption4(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase">
-                            {qType === 'ESSAY' ? "Scoring Keywords Match list (Comma-separated words)" : "Strict Correct Answer text"}
-                          </label>
-                          <input
-                            type="text"
-                            placeholder={qType === 'ESSAY' ? "combination, permutation, factorial, sequence" : qType === 'TRUE_FALSE' ? "True" : "Exact option copy match"}
-                            value={qCorrectAnswer}
-                            onChange={(e) => setQCorrectAnswer(e.target.value)}
-                            className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 font-semibold"
-                            required
-                          />
-                        </div>
-
+                      {/* Question Creation Options Switcher */}
+                      <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-xl">
                         <button
-                          type="submit"
-                          disabled={loading}
-                          className="w-full bg-slate-800 text-white font-bold text-xs py-2 rounded-lg hover:bg-slate-900 transition-colors"
+                          type="button"
+                          onClick={() => setQuestionToolTab("manual")}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                            questionToolTab === "manual" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                          }`}
                         >
-                          Upload Question
+                          <FileText className="h-3.5 w-3.5 text-indigo-500" />
+                          <span>Manual Question Writer</span>
                         </button>
-                      </form>
-                    </div>
-
-                    {/* AI Generator Dashboard workbench using Gemini */}
-                    <div className="bg-gradient-to-br from-indigo-900 to-indigo-950 text-white rounded-2xl p-5 shadow-lg space-y-4 relative overflow-hidden border border-indigo-700">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
-                      
-                      <h3 className="font-bold text-white text-sm flex items-center space-x-2 pb-2 border-b border-white/10">
-                        <BrainCircuit className="h-4 w-4 text-indigo-300 animate-pulse" />
-                        <span>Gemini AI Question designer</span>
-                      </h3>
-
-                      <form onSubmit={handleAiGenerateQuestions} className="space-y-3 text-xs">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-indigo-300 uppercase">Target Curriculum Subject</label>
-                          <input
-                            type="text"
-                            value={aiSubject}
-                            onChange={(e) => setAiSubject(e.target.value)}
-                            className="w-full bg-white/10 border border-white/10 p-2 rounded-lg focus:outline-none focus:border-indigo-400 text-white font-medium"
-                            required
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-indigo-300 uppercase">Subtopic Syllabus Focus</label>
-                          <input
-                            type="text"
-                            value={aiTopic}
-                            onChange={(e) => setAiTopic(e.target.value)}
-                            className="w-full bg-white/10 border border-white/10 p-2 rounded-lg focus:outline-none focus:border-indigo-400 text-white"
-                            required
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-indigo-300 uppercase">Quantity (1-5)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="5"
-                              value={aiQty}
-                              onChange={(e) => setAiQty(e.target.value)}
-                              className="w-full bg-white/10 border border-white/10 p-2 rounded-lg text-white font-bold"
-                              required
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-indigo-300 uppercase">Academic Difficulty</label>
-                            <select
-                              value={aiDifficulty}
-                              onChange={(e) => setAiDifficulty(e.target.value)}
-                              className="w-full bg-indigo-900 border border-white/10 p-2 rounded-lg text-white font-medium"
-                              required
-                            >
-                              <option value="Easy">Easy (SS1 Grade)</option>
-                              <option value="Medium">Medium (SS2 Grade)</option>
-                              <option value="Hard">Hard (SS3 / WAEC Level)</option>
-                            </select>
-                          </div>
-                        </div>
-
                         <button
-                          type="submit"
-                          disabled={loading}
-                          className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold text-xs py-3 rounded-xl hover:opacity-90 transition-all flex items-center justify-center space-x-1 border border-emerald-400"
+                          type="button"
+                          onClick={() => setQuestionToolTab("ai")}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                            questionToolTab === "ai" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
+                          }`}
                         >
-                          <Sparkles className="h-4 w-4 text-white animate-spin" />
-                          <span>{loading ? "Generating Assessment..." : "Verify & Inject AI Questions"}</span>
+                          <BrainCircuit className="h-3.5 w-3.5 text-indigo-200" />
+                          <span>Gemini AI Question Designer</span>
                         </button>
-                      </form>
+                        <button
+                          type="button"
+                          onClick={() => setQuestionToolTab("bulk")}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                            questionToolTab === "bulk" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <FileUp className="h-3.5 w-3.5 text-emerald-600" />
+                          <span>Bulk Text / JSON Upload</span>
+                        </button>
+                      </div>
 
-                      {aiSuccessLog && (
-                        <div className="bg-indigo-950/70 p-3 rounded-xl border border-white/10 space-y-1.5 text-[10px] text-indigo-200">
-                          <p className="font-bold text-white uppercase tracking-wider flex items-center">
-                            <CheckCircle className="h-3 w-3 text-emerald-400 mr-1" />
-                            <span>Outbound Gemini Dispatch log</span>
-                          </p>
-                          <p>{aiSuccessLog.message}</p>
-                          <p className="font-mono text-[9px] text-indigo-300">Target Assessor Model: gemini-3.5-flash-latest</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                      {/* Tool Workspace Container */}
+                      {questionToolTab === "manual" && (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-1.5">
+                              <FileText className="h-4 w-4 text-indigo-500" />
+                              <span>Manual Assessment Writer</span>
+                            </h3>
+                            <span className="text-[11px] text-slate-400">Add individual assessment question to bank</span>
+                          </div>
 
-                  {/* Interactive Questions list */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                    <h3 className="font-bold text-slate-800 text-base">Current Question Set ({examQuestions.length})</h3>
-                    {examQuestions.length > 0 ? (
-                      <div className="space-y-3.5 divide-y divide-slate-100">
-                        {examQuestions.map((q, idx) => (
-                          <div key={q.id} className="pt-3.5 first:pt-0 space-y-2 text-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-slate-800 font-mono">Q{idx + 1} ({q.type})</span>
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">{q.scorePoints} pts</span>
+                          <form onSubmit={handleCreateQuestion} className="space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">Assessed Question Prompt</label>
+                              <textarea
+                                placeholder="Type the question or exam prompt here..."
+                                value={qText}
+                                onChange={(e) => setQText(e.target.value)}
+                                className="w-full border border-slate-200 p-2.5 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 h-16 font-medium"
+                                required
+                              />
                             </div>
-                            <p className="font-semibold text-slate-700 leading-relaxed">{q.text}</p>
-                            {q.options && q.options.length > 0 && (
-                              <div className="grid grid-cols-2 gap-2 mt-1">
-                                {q.options.map((opt, oIdx) => (
-                                  <div key={oIdx} className="bg-slate-50 p-2 rounded text-slate-600 border border-slate-100">
-                                    {opt}
-                                  </div>
-                                ))}
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Question Format</label>
+                                <select
+                                  value={qType}
+                                  onChange={(e: any) => setQType(e.target.value)}
+                                  className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 font-medium"
+                                  required
+                                >
+                                  <option value="MCQ">Multiple Choice (MCQ)</option>
+                                  <option value="TRUE_FALSE">True / False</option>
+                                  <option value="ESSAY">Theory / Essay</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Weight Score (Points)</label>
+                                <input
+                                  type="number"
+                                  value={qPoints}
+                                  onChange={(e) => setQPoints(e.target.value)}
+                                  className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 font-mono font-bold"
+                                  required
+                                />
+                              </div>
+                            </div>
+
+                            {qType === "MCQ" && (
+                              <div className="space-y-2 bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Configure MCQ choices</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <input type="text" placeholder="Option A" value={qOption1} onChange={(e)=>setQOption1(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
+                                  <input type="text" placeholder="Option B" value={qOption2} onChange={(e)=>setQOption2(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
+                                  <input type="text" placeholder="Option C" value={qOption3} onChange={(e)=>setQOption3(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
+                                  <input type="text" placeholder="Option D" value={qOption4} onChange={(e)=>setQOption4(e.target.value)} className="border border-slate-200 p-2 rounded text-xs text-slate-800 bg-white" required />
+                                </div>
                               </div>
                             )}
-                            <p className="text-[11px] text-emerald-700 bg-emerald-50 inline-block px-2.5 py-1 rounded font-bold">
-                              Correct Answer key: {q.answer}
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">
+                                {qType === 'ESSAY' ? "Scoring Keywords Match list (Comma-separated words)" : "Strict Correct Answer text"}
+                              </label>
+                              <input
+                                type="text"
+                                placeholder={qType === 'ESSAY' ? "combination, permutation, factorial, sequence" : qType === 'TRUE_FALSE' ? "True" : "Exact matching option text"}
+                                value={qCorrectAnswer}
+                                onChange={(e) => setQCorrectAnswer(e.target.value)}
+                                className="w-full border border-slate-200 p-2 rounded-lg text-xs focus:outline-indigo-500 text-slate-800 font-semibold"
+                                required
+                              />
+                            </div>
+
+                            <button
+                              type="submit"
+                              disabled={loading}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center space-x-1.5"
+                            >
+                              <Upload className="h-4 w-4" />
+                              <span>{loading ? "Uploading..." : "Upload & Save Question to Assessment Bank"}</span>
+                            </button>
+                          </form>
+                        </div>
+                      )}
+
+                      {questionToolTab === "ai" && (
+                        <div className="bg-gradient-to-br from-indigo-900 to-indigo-950 text-white rounded-2xl p-5 shadow-lg space-y-4 relative overflow-hidden border border-indigo-700">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
+                          
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <h3 className="font-bold text-white text-sm flex items-center space-x-2">
+                              <BrainCircuit className="h-4 w-4 text-indigo-300 animate-pulse" />
+                              <span>Gemini AI Question Designer</span>
+                            </h3>
+                            <span className="text-[10px] text-indigo-300 font-mono">International Curriculum Standard</span>
+                          </div>
+
+                          <form onSubmit={handleAiGenerateQuestions} className="space-y-3 text-xs">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-indigo-300 uppercase">Target Subject</label>
+                                <input
+                                  type="text"
+                                  value={aiSubject}
+                                  onChange={(e) => setAiSubject(e.target.value)}
+                                  className="w-full bg-white/10 border border-white/10 p-2 rounded-lg focus:outline-none focus:border-indigo-400 text-white font-medium"
+                                  required
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-indigo-300 uppercase">Topic / Syllabus Focus</label>
+                                <input
+                                  type="text"
+                                  value={aiTopic}
+                                  onChange={(e) => setAiTopic(e.target.value)}
+                                  className="w-full bg-white/10 border border-white/10 p-2 rounded-lg focus:outline-none focus:border-indigo-400 text-white"
+                                  required
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-indigo-300 uppercase">Quantity of Questions (1-5)</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="5"
+                                  value={aiQty}
+                                  onChange={(e) => setAiQty(e.target.value)}
+                                  className="w-full bg-white/10 border border-white/10 p-2 rounded-lg text-white font-bold"
+                                  required
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-indigo-300 uppercase">Difficulty Level</label>
+                                <select
+                                  value={aiDifficulty}
+                                  onChange={(e) => setAiDifficulty(e.target.value)}
+                                  className="w-full bg-indigo-900 border border-white/10 p-2 rounded-lg text-white font-medium"
+                                  required
+                                >
+                                  <option value="Easy">Easy (Foundation / SS1)</option>
+                                  <option value="Medium">Medium (Intermediate / SS2)</option>
+                                  <option value="Hard">Hard (Senior / SS3 / WAEC Standard)</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <button
+                              type="submit"
+                              disabled={loading}
+                              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold text-xs py-3 rounded-xl hover:opacity-95 transition-all flex items-center justify-center space-x-1.5 border border-emerald-400 shadow-md"
+                            >
+                              <Sparkles className="h-4 w-4 text-white" />
+                              <span>{loading ? "Generating & Injecting Questions..." : "Verify & Inject AI Questions into Bank"}</span>
+                            </button>
+                          </form>
+
+                          {aiSuccessLog && (
+                            <div className="bg-indigo-950/80 p-3 rounded-xl border border-white/10 space-y-1.5 text-[10px] text-indigo-200">
+                              <p className="font-bold text-white uppercase tracking-wider flex items-center">
+                                <CheckCircle className="h-3 w-3 text-emerald-400 mr-1" />
+                                <span>Gemini Generation Result</span>
+                              </p>
+                              <p>{aiSuccessLog.message}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {questionToolTab === "bulk" && (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-1.5">
+                              <FileUp className="h-4 w-4 text-emerald-600" />
+                              <span>Bulk Question Upload</span>
+                            </h3>
+                            <span className="text-[11px] text-slate-400">Batch paste questions</span>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Questions Text or JSON Array</label>
+                            <textarea
+                              placeholder={`Question: What is the capital of Ogun State?\nA) Ikeja\nB) Abeokuta\nC) Ibadan\nD) Akure\nAnswer: Abeokuta\nPoints: 10\n\nQuestion: The chemical symbol for Gold is Au.\nAnswer: True\nPoints: 5`}
+                              value={bulkQuestionsText}
+                              onChange={(e) => setBulkQuestionsText(e.target.value)}
+                              rows={8}
+                              className="w-full border border-slate-200 p-3 rounded-xl text-xs font-mono focus:outline-indigo-500 text-slate-800 bg-slate-50/50"
+                            />
+                            <p className="text-[10px] text-slate-400">
+                              Separate multiple questions with a blank line. Supports MCQ format (Options A-D with Answer) or True/False.
                             </p>
                           </div>
-                        ))}
+
+                          <button
+                            type="button"
+                            onClick={handleBulkUploadQuestions}
+                            disabled={loading || !bulkQuestionsText.trim()}
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center space-x-1.5"
+                          >
+                            <FileUp className="h-4 w-4" />
+                            <span>{loading ? "Processing..." : "Upload & Save All Questions"}</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Interactive Questions list with Delete and Live Status */}
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <h3 className="font-bold text-slate-800 text-base">Current Question Set ({examQuestions.length})</h3>
+                          <span className="text-xs font-mono font-bold text-slate-500">
+                            Total Points: {examQuestions.reduce((acc, q) => acc + q.scorePoints, 0)}
+                          </span>
+                        </div>
+
+                        {examQuestions.length > 0 ? (
+                          <div className="space-y-3.5 divide-y divide-slate-100">
+                            {examQuestions.map((q, idx) => (
+                              <div key={q.id} className="pt-3.5 first:pt-0 space-y-2 text-xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-800 font-mono">Q{idx + 1} ({q.type})</span>
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">{q.scorePoints} pts</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteQuestion(q.id)}
+                                      className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded transition-all"
+                                      title="Delete Question"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="font-semibold text-slate-700 leading-relaxed">{q.text}</p>
+                                {q.options && q.options.length > 0 && (
+                                  <div className="grid grid-cols-2 gap-2 mt-1">
+                                    {q.options.map((opt, oIdx) => (
+                                      <div key={oIdx} className="bg-slate-50 p-2 rounded text-slate-600 border border-slate-100">
+                                        {opt}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <p className="text-[11px] text-emerald-700 bg-emerald-50 inline-block px-2.5 py-1 rounded font-bold">
+                                  Correct Answer: {q.answer}
+                                </p>
+                              </div>
+                            ))}
+
+                            {/* Assessment Bank Bottom Action confirmation bar */}
+                            <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 p-4 rounded-xl">
+                              <div>
+                                <div className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                                  <Check className="h-4 w-4 text-emerald-600" />
+                                  <span>{examQuestions.length} Questions Stored in Bank</span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  {selectedExam.status === "PUBLISHED" 
+                                    ? "This evaluation is confirmed and live in the student CBT terminal."
+                                    : "Confirm this draft evaluation to upload and activate it for students."}
+                                </p>
+                              </div>
+                              {selectedExam.status === "DRAFT" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateExamStatus(selectedExam.id, "PUBLISHED")}
+                                  disabled={loading}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow transition-all flex items-center space-x-1.5 shrink-0"
+                                >
+                                  <CheckCircle className="h-4 w-4" />
+                                  <span>Confirm & Upload Assessment to CBT Portal</span>
+                                </button>
+                              ) : (
+                                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center space-x-1">
+                                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>Active on Student CBT Portal</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-10 text-slate-400 border border-dashed border-slate-200 rounded-xl space-y-2">
+                            <p className="text-xs font-semibold">No questions in this assessment bank yet.</p>
+                            <p className="text-[11px] text-slate-400">Use the Manual Writer, Gemini AI Designer, or Bulk Upload tab above to add questions.</p>
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="text-center py-10 text-slate-400 border border-dashed border-slate-200 rounded-xl">
-                        No questions in this assessment bank yet. Add manually above or try the AI Generator!
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
+                    </>
+                  ) : (
                 /* Submissions & Proctoring Tab view */
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">

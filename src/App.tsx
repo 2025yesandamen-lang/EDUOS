@@ -22,7 +22,9 @@ import {
   WifiOff,
   Database,
   CloudUpload,
-  CheckCircle
+  CheckCircle,
+  ChevronRight,
+  Plus
 } from "lucide-react";
 import Shell from "./components/Shell";
 import AdminERP from "./components/AdminERP";
@@ -57,7 +59,7 @@ import {
 } from "./utils/auditLogger";
 import { supabase } from "./lib/supabase";
 
-function TeacherDashboardWidget({ token }: { token: string }) {
+function TeacherDashboardWidget({ token, onNavigate }: { token: string; onNavigate?: (tab: string) => void }) {
   const [exams, setExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -93,41 +95,72 @@ function TeacherDashboardWidget({ token }: { token: string }) {
             <p className="text-[10px] font-mono text-slate-400">Continuous Assessment & Assignments Registry</p>
           </div>
         </div>
-        <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full uppercase tracking-wider">
-          {exams.length} Active Exams
-        </span>
+        <div className="flex items-center space-x-2">
+          <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full uppercase tracking-wider">
+            {exams.length} Active Exams
+          </span>
+          <button
+            type="button"
+            onClick={() => onNavigate?.("exams")}
+            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors flex items-center space-x-1"
+          >
+            <span>Open CBT Suite</span>
+            <ChevronRight className="h-3 w-3" />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Upcoming Assessments */}
         <div className="space-y-3">
-          <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
-            Upcoming Exams & CAs
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
+              Upcoming Exams & CAs
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("exams")}
+              className="text-[10px] text-indigo-600 hover:underline font-bold"
+            >
+              Manage &rarr;
+            </button>
+          </div>
           {loading ? (
             <div className="flex items-center space-x-2 text-xs text-slate-400 py-4">
               <RefreshCw className="h-3 w-3 animate-spin text-indigo-500" />
               <span>Loading assessments registry...</span>
             </div>
           ) : exams.length === 0 ? (
-            <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-500 border border-slate-100">
-              No upcoming exams scheduled. Click "Assessments Engine" above to schedule one.
+            <div 
+              onClick={() => onNavigate?.("exams")}
+              className="p-3 bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors rounded-xl text-xs text-slate-500 border border-slate-100 flex items-center justify-between"
+            >
+              <span>No upcoming exams scheduled. Click to initialize draft evaluation.</span>
+              <Plus className="h-3.5 w-3.5 text-indigo-600" />
             </div>
           ) : (
             <div className="space-y-2">
               {exams.slice(0, 3).map((exam) => (
-                <div key={exam.id} className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl flex items-center justify-between hover:bg-slate-50 transition-colors">
-                  <div className="min-w-0">
-                    <span className="font-bold text-slate-700 text-xs block truncate">{exam.title}</span>
-                    <span className="text-[9px] text-slate-400 font-mono">Duration: {exam.duration} mins | Subject: {exam.subjectCode || "GEN-101"}</span>
+                <div 
+                  key={exam.id} 
+                  onClick={() => onNavigate?.("exams")}
+                  className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl flex items-center justify-between hover:bg-indigo-50/50 hover:border-indigo-200 transition-all cursor-pointer group shadow-xs"
+                  title="Click to view & edit in Assessment Cloud"
+                >
+                  <div className="min-w-0 flex-1 pr-2">
+                    <span className="font-bold text-slate-700 group-hover:text-indigo-700 text-xs block truncate transition-colors">{exam.title}</span>
+                    <span className="text-[9px] text-slate-400 font-mono">Duration: {exam.duration} mins | Qs: {exam.totalQuestions || 0}</span>
                   </div>
-                  <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase ${
-                    exam.isPublished 
-                      ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
-                      : "bg-amber-50 text-amber-700 border border-amber-100"
-                  }`}>
-                    {exam.isPublished ? "Published" : "Draft"}
-                  </span>
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase ${
+                      exam.status === "PUBLISHED" 
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
+                        : "bg-amber-50 text-amber-700 border border-amber-100"
+                    }`}>
+                      {exam.status === "PUBLISHED" ? "Published" : "Draft"}
+                    </span>
+                    <ChevronRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+                  </div>
                 </div>
               ))}
             </div>
@@ -136,29 +169,46 @@ function TeacherDashboardWidget({ token }: { token: string }) {
 
         {/* Assignments & Grading Queue */}
         <div className="space-y-3">
-          <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
-            Pending Continuous Assessment Actions
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
+              Pending Continuous Assessment Actions
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("continuous-assessment")}
+              className="text-[10px] text-indigo-600 hover:underline font-bold"
+            >
+              View All &rarr;
+            </button>
+          </div>
           <div className="space-y-2">
             {[
               { id: "asg-1", title: "Algebraic Trigonometry Quiz", course: "Mathematics Level 2", pending: "4 submissions", priority: "HIGH" },
               { id: "asg-2", title: "Photosynthesis Lab Report", course: "Biology Section A", pending: "9 submissions", priority: "MEDIUM" },
               { id: "asg-3", title: "Frictional Forces CBT Review", course: "Physics Core", pending: "All Graded", priority: "LOW" },
             ].map((asg) => (
-              <div key={asg.id} className="p-3 bg-white border border-slate-150 rounded-xl flex items-center justify-between hover:border-indigo-200 transition-colors">
-                <div className="min-w-0">
-                  <span className="font-bold text-slate-700 text-xs block truncate">{asg.title}</span>
+              <div 
+                key={asg.id} 
+                onClick={() => onNavigate?.("continuous-assessment")}
+                className="p-3 bg-white border border-slate-150 rounded-xl flex items-center justify-between hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer group shadow-xs"
+                title="Click to open Continuous Assessment scoring register"
+              >
+                <div className="min-w-0 flex-1 pr-2">
+                  <span className="font-bold text-slate-700 group-hover:text-indigo-700 text-xs block truncate transition-colors">{asg.title}</span>
                   <span className="text-[9px] text-slate-400 font-mono">{asg.course} • <strong className="text-indigo-600">{asg.pending}</strong></span>
                 </div>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${
-                  asg.priority === "HIGH" 
-                    ? "bg-rose-50 text-rose-700" 
-                    : asg.priority === "MEDIUM"
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-slate-100 text-slate-600"
-                }`}>
-                  {asg.priority}
-                </span>
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${
+                    asg.priority === "HIGH" 
+                      ? "bg-rose-50 text-rose-700" 
+                      : asg.priority === "MEDIUM"
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-slate-100 text-slate-600"
+                  }`}>
+                    {asg.priority}
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+                </div>
               </div>
             ))}
           </div>
@@ -1231,9 +1281,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Role-Specific Live Dynamic Widgets (Teachers / Parents) */}
-              {user.role === "TEACHER" && (
-                <TeacherDashboardWidget token={token} />
+              {/* Role-Specific Live Dynamic Widgets (Teachers / Admins / Parents) */}
+              {(user.role === "TEACHER" || user.role === "ADMIN") && (
+                <TeacherDashboardWidget token={token} onNavigate={setActiveTab} />
               )}
               {user.role === "PARENT" && (
                 <ParentDashboardWidget token={token} user={user} />

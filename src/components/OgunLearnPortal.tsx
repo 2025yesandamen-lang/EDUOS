@@ -35,7 +35,7 @@ const OGUNLEARN_CURRICULUM: Subject[] = [
     id: "sub-1",
     name: "General Mathematics",
     classLevel: "SS3 Science & Arts",
-    description: "Unified curriculum preparing students for WASSCE/NECO mathematics assessments.",
+    description: "International standard unified curriculum preparing students for global and national assessments.",
     topics: [
       {
         title: "Quadratic Equations & Algebra",
@@ -205,7 +205,7 @@ export default function OgunLearnPortal() {
           {/* Left Column: Subject Grid */}
           <div className="lg:col-span-2 space-y-4">
             <h3 className="font-bold text-slate-800 text-sm font-mono tracking-wider uppercase">
-              Select Curated Subject Curriculum
+              Select Curated Subject Curriculum (International Standard)
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

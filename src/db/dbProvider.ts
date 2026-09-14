@@ -13,7 +13,9 @@ import { AsyncLocalStorage } from "async_hooks";
 export const tenantLocalStorage = new AsyncLocalStorage<string>();
 
 export function getTenantId(): string {
-  return tenantLocalStorage.getStore() || "default";
+  const store = tenantLocalStorage.getStore();
+  if (store === "super-admin-bypass") return "default";
+  return store || "default";
 }
 
 function normalizeDatabaseUrl(rawUrl?: string): string {
@@ -406,7 +408,7 @@ async function initializeDatabase() {
 void initializeDatabase();
 
 // Helper to safely execute database queries with an automatic local fallback on failure and automatic tenant-isolation filtering
-async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promise<T>): Promise<T> {
+async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promise<T>, bypassTenantFilter = false): Promise<T> {
   let result: T;
   if (isPostgreSQL) {
     try {
@@ -422,7 +424,7 @@ async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promis
 
   // Intercept and inject automatic tenant-isolation filter on outgoing database requests
   const activeTenantId = tenantLocalStorage.getStore();
-  if (activeTenantId && activeTenantId !== "super-admin-bypass") {
+  if (!bypassTenantFilter && activeTenantId && activeTenantId !== "super-admin-bypass") {
     if (Array.isArray(result)) {
       return result.filter((item: any) => {
         if (!item || typeof item !== "object") return true;
@@ -432,6 +434,7 @@ async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promis
 
         const itemTenant = item.tenantId || item.tenant_id;
         if (itemTenant === undefined) return true;
+        if (activeTenantId === "default" && (itemTenant === "default" || itemTenant === "super-admin-bypass")) return true;
         return itemTenant === activeTenantId;
       }) as unknown as T;
     } else if (result && typeof result === "object") {
@@ -441,6 +444,9 @@ async function executeQuery<T>(pgOp: () => Promise<T>, localOp: () => T | Promis
 
       const itemTenant = item.tenantId || item.tenant_id;
       if (itemTenant !== undefined && itemTenant !== activeTenantId) {
+        if (activeTenantId === "default" && (itemTenant === "default" || itemTenant === "super-admin-bypass")) {
+          return result;
+        }
         return null as unknown as T;
       }
     }
@@ -599,7 +605,7 @@ const INITIAL_SEED_DATA: LocalDbSchema = {
       objectives: "By the end of this lesson, students should be able to solve quadratic equations using the factorization method and the quadratic formula.",
       content: "Introduction to Quadratic Equations. Standard Form: ax^2 + bx + c = 0. Solving methods discussed: Factorization, Completing the Square, and Quadratic Formula (popularly known as the 'Almighty Formula' in Nigerian curricula). Practice examples include factoring x^2 - 5x + 6 = 0.",
       status: "APPROVED",
-      feedback: "Well articulated lesson plan. Detailed and aligns perfectly with the Ogun State unified curriculum.",
+      feedback: "Well articulated lesson plan. Detailed and aligns perfectly with the international standard unified curriculum.",
       createdAt: "2026-07-10T08:00:00.000Z",
       reviewedAt: "2026-07-10T12:00:00.000Z"
     },
@@ -1251,7 +1257,8 @@ export async function dbDeleteExam(id: string): Promise<boolean> {
 export async function dbGetQuestionsForExam(examId: string): Promise<any[]> {
   return executeQuery(
     async () => await db.select().from(schema.questions).where(eq(schema.questions.examId, examId)),
-    () => readLocalDb().questions.filter(q => q.examId === examId)
+    () => readLocalDb().questions.filter(q => q.examId === examId),
+    true // Questions belong to the authorized exam by examId
   );
 }
 
@@ -1309,6 +1316,23 @@ export async function dbAddQuestionsBulk(bulkQuestions: any[]): Promise<any[]> {
       writeLocalDb(local);
       return bulkQuestions;
     }
+  );
+}
+
+export async function dbDeleteQuestion(questionId: string): Promise<boolean> {
+  return executeQuery(
+    async () => {
+      await db.delete(schema.questions).where(eq(schema.questions.id, questionId));
+      return true;
+    },
+    () => {
+      const local = readLocalDb();
+      const initialCount = local.questions.length;
+      local.questions = local.questions.filter((q: any) => q.id !== questionId);
+      writeLocalDb(local);
+      return local.questions.length < initialCount;
+    },
+    true
   );
 }
 

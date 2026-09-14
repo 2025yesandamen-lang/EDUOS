@@ -788,9 +788,9 @@ export default function SchoolLandingPage({ subdomain, onBackToMain, onLoginSucc
                 <BookOpen className="h-5 w-5" />
               </div>
               <div>
-                <h4 className="font-bold text-slate-800 text-sm">Ogun State Unified Curriculum</h4>
+                <h4 className="font-bold text-slate-800 text-sm">International Standard Unified Curriculum</h4>
                 <p className="text-xs text-slate-500 leading-relaxed mt-1">
-                  Fully synchronized lesson plans and academic reviews. Our senior teachers upload robust preparatory content aligned with terminal WAEC, NECO, and JAMB expectations.
+                  Fully synchronized global and national lesson plans and academic reviews. Our senior teachers upload robust preparatory content aligned with international standards, WAEC, NECO, and JAMB benchmarks.
                 </p>
               </div>
             </div>
@@ -963,7 +963,7 @@ export default function SchoolLandingPage({ subdomain, onBackToMain, onLoginSucc
                             onChange={(e) => setGradeApplied(e.target.value)}
                             className={inputBgClass}
                           >
-                            <option value="SS1 Science">SS1 Science (Ogun standard)</option>
+                            <option value="SS1 Science">SS1 Science (International standard)</option>
                             <option value="SS1 Arts">SS1 Arts</option>
                             <option value="SS2 Commerce">SS2 Commerce</option>
                             <option value="SS2 Science">SS2 Science</option>

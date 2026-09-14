@@ -954,8 +954,8 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                       }}
                       className="border border-indigo-200 bg-indigo-50/70 text-indigo-900 font-bold rounded-lg text-xs p-1.5 focus:outline-indigo-500"
                     >
-                      {tenantsList.map(t => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
+                      {tenantsList.map((t, idx) => (
+                        <option key={`tenant-opt-${t.id}-${idx}`} value={t.id}>{t.name}</option>
                       ))}
                     </select>
                   </div>
@@ -1326,8 +1326,8 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                     }}
                     className="w-full border border-indigo-200 bg-white p-2.5 rounded-lg text-xs focus:outline-indigo-500 text-indigo-900 font-bold"
                   >
-                    {tenantsList.map(tenant => (
-                      <option key={tenant.id} value={tenant.id}>
+                    {tenantsList.map((tenant, idx) => (
+                      <option key={`tenant-dest-${tenant.id}-${idx}`} value={tenant.id}>
                         {tenant.name} ({tenant.subdomain}.cbtprox.com)
                       </option>
                     ))}

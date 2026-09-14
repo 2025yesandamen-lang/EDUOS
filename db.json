@@ -1087,7 +1087,7 @@
       "duration": 15,
       "passingScore": 50,
       "status": "PUBLISHED",
-      "totalQuestions": 4,
+      "totalQuestions": 6,
       "startTime": "2026-07-01T00:00:00.000Z",
       "endTime": "2026-12-31T23:59:59.000Z"
     },
@@ -1119,12 +1119,12 @@
       "description": "soil erosion",
       "duration": 15,
       "passingScore": 50,
-      "status": "DRAFT",
-      "totalQuestions": 0,
+      "status": "PUBLISHED",
+      "totalQuestions": 5,
       "startTime": "2026-09-11T17:00:29.579Z",
       "endTime": "2026-10-11T17:00:29.579Z",
-      "tenantId": "super-admin-bypass",
-      "tenant_id": "super-admin-bypass"
+      "tenantId": "default",
+      "tenant_id": "default"
     }
   ],
   "questions": [
@@ -1140,7 +1140,8 @@
         "x = 6"
       ],
       "answer": "x = 5",
-      "scorePoints": 25
+      "scorePoints": 25,
+      "tenantId": "default"
     },
     {
       "id": "q-2",
@@ -1152,7 +1153,8 @@
         "False"
       ],
       "answer": "True",
-      "scorePoints": 25
+      "scorePoints": 25,
+      "tenantId": "default"
     },
     {
       "id": "q-3",
@@ -1166,7 +1168,8 @@
         "33"
       ],
       "answer": "29",
-      "scorePoints": 25
+      "scorePoints": 25,
+      "tenantId": "default"
     },
     {
       "id": "q-4",
@@ -1175,7 +1178,8 @@
       "type": "ESSAY",
       "options": [],
       "answer": "combination order does not matter, permutation order does matter",
-      "scorePoints": 25
+      "scorePoints": 25,
+      "tenantId": "default"
     },
     {
       "id": "q-5",
@@ -1189,7 +1193,8 @@
         "P = F / A"
       ],
       "answer": "F = m * a",
-      "scorePoints": 34
+      "scorePoints": 34,
+      "tenantId": "default"
     },
     {
       "id": "q-6",
@@ -1201,7 +1206,8 @@
         "False"
       ],
       "answer": "False",
-      "scorePoints": 33
+      "scorePoints": 33,
+      "tenantId": "default"
     },
     {
       "id": "q-7",
@@ -1210,7 +1216,8 @@
       "type": "ESSAY",
       "options": [],
       "answer": "first law thermodynamics conservation total energy",
-      "scorePoints": 33
+      "scorePoints": 33,
+      "tenantId": "default"
     },
     {
       "id": "q-ai-1783765169390-0",
@@ -1224,7 +1231,8 @@
         "k = 36 or k = -36"
       ],
       "answer": "k = 12 or k = -12",
-      "scorePoints": 10
+      "scorePoints": 10,
+      "tenantId": "default"
     },
     {
       "id": "q-ai-1783765169390-1",
@@ -1236,7 +1244,8 @@
         "False"
       ],
       "answer": "True",
-      "scorePoints": 10
+      "scorePoints": 10,
+      "tenantId": "default"
     },
     {
       "id": "q-ai-1783765169390-2",
@@ -1250,7 +1259,116 @@
         "25/4"
       ],
       "answer": "13/4",
-      "scorePoints": 10
+      "scorePoints": 10,
+      "tenantId": "default"
+    },
+    {
+      "id": "q-ai-1789385129523-1",
+      "examId": "ex-4-cs67b",
+      "text": "In the study of agric  focusing on soil erosion, which of the following best demonstrates the key operational mechanism (Level: Medium, Question #1)?",
+      "type": "MCQ",
+      "options": [
+        "Essential defining parameter of soil erosion",
+        "Secondary circumstantial attribute in agric ",
+        "Standard control variable requirement",
+        "Non-applicable anomalous observation"
+      ],
+      "answer": "Essential defining parameter of soil erosion",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385129523-2",
+      "examId": "ex-4-cs67b",
+      "text": "In the study of agric  focusing on soil erosion, which of the following best demonstrates the key operational mechanism (Level: Medium, Question #2)?",
+      "type": "MCQ",
+      "options": [
+        "Essential defining parameter of soil erosion",
+        "Secondary circumstantial attribute in agric ",
+        "Standard control variable requirement",
+        "Non-applicable anomalous observation"
+      ],
+      "answer": "Essential defining parameter of soil erosion",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385129523-3",
+      "examId": "ex-4-cs67b",
+      "text": "Regarding soil erosion in agric : Is it valid that primary core principles apply uniformly under Medium curriculum conditions? (Item #3)",
+      "type": "TRUE_FALSE",
+      "options": [
+        "True",
+        "False"
+      ],
+      "answer": "True",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385129523-4",
+      "examId": "ex-4-cs67b",
+      "text": "In the study of agric  focusing on soil erosion, which of the following best demonstrates the key operational mechanism (Level: Medium, Question #4)?",
+      "type": "MCQ",
+      "options": [
+        "Essential defining parameter of soil erosion",
+        "Secondary circumstantial attribute in agric ",
+        "Standard control variable requirement",
+        "Non-applicable anomalous observation"
+      ],
+      "answer": "Essential defining parameter of soil erosion",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385129523-5",
+      "examId": "ex-4-cs67b",
+      "text": "In the study of agric  focusing on soil erosion, which of the following best demonstrates the key operational mechanism (Level: Medium, Question #5)?",
+      "type": "MCQ",
+      "options": [
+        "Essential defining parameter of soil erosion",
+        "Secondary circumstantial attribute in agric ",
+        "Standard control variable requirement",
+        "Non-applicable anomalous observation"
+      ],
+      "answer": "Essential defining parameter of soil erosion",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385712654-0",
+      "examId": "ex-1",
+      "text": "A Carnot engine operates between two heat reservoirs at temperatures of 600 K and 300 K. If the engine performs 1200 J of work per cycle, what is the total entropy change of the universe for one complete cycle?",
+      "type": "MCQ",
+      "options": [
+        "0 J/K",
+        "2 J/K",
+        "4 J/K",
+        "6 J/K"
+      ],
+      "answer": "0 J/K",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
+    },
+    {
+      "id": "q-ai-1789385712654-1",
+      "examId": "ex-1",
+      "text": "For an adiabatic reversible process involving an ideal gas, the relationship between pressure P and volume V is given by PV^gamma = constant, where gamma is the ratio of molar heat capacities at constant pressure and constant volume. Consequently, the entropy of the system must increase during this process.",
+      "type": "TRUE_FALSE",
+      "options": [
+        "True",
+        "False"
+      ],
+      "answer": "False",
+      "scorePoints": 10,
+      "tenantId": "default",
+      "tenant_id": "default"
     }
   ],
   "examAttempts": [
@@ -1486,6 +1604,48 @@
       "gradePoint": "A+",
       "remarks": "Outstanding performance! Exceptional analytical proficiency demonstrated.",
       "submitTime": "2026-09-11T16:54:26.985Z"
+    },
+    {
+      "id": "attp-1789385466245",
+      "examId": "ex-4-cs67b",
+      "studentId": "s-1",
+      "startTime": "2026-09-14T11:31:06.245Z",
+      "answers": {
+        "q-ai-1789385129523-1": "Secondary circumstantial attribute in agric "
+      },
+      "score": 0,
+      "percentage": 0,
+      "status": "FAIL",
+      "isSubmitted": true,
+      "violationsCount": 0,
+      "tenantId": "default",
+      "tenant_id": "default",
+      "gradePoint": "F",
+      "remarks": "Requires intensive revision and conceptual guidance.",
+      "submitTime": "2026-09-14T11:31:19.129Z"
+    },
+    {
+      "id": "attp-1789385492986",
+      "examId": "ex-4-cs67b",
+      "studentId": "s-1",
+      "startTime": "2026-09-14T11:31:32.986Z",
+      "answers": {
+        "q-ai-1789385129523-1": "Secondary circumstantial attribute in agric ",
+        "q-ai-1789385129523-2": "Secondary circumstantial attribute in agric ",
+        "q-ai-1789385129523-3": "True",
+        "q-ai-1789385129523-4": "Essential defining parameter of soil erosion",
+        "q-ai-1789385129523-5": "Standard control variable requirement"
+      },
+      "score": 20,
+      "percentage": 40,
+      "status": "FAIL",
+      "isSubmitted": true,
+      "violationsCount": 0,
+      "tenantId": "default",
+      "tenant_id": "default",
+      "gradePoint": "D",
+      "remarks": "Marginal pass. Target revision on areas of failure.",
+      "submitTime": "2026-09-14T11:31:44.957Z"
     }
   ],
   "lessonNotes": [
@@ -1501,7 +1661,7 @@
       "objectives": "By the end of this lesson, students should be able to solve quadratic equations using the factorization method and the quadratic formula.",
       "content": "Introduction to Quadratic Equations. Standard Form: ax^2 + bx + c = 0. Solving methods discussed: Factorization, Completing the Square, and Quadratic Formula (popularly known as the 'Almighty Formula' in Nigerian curricula). Practice examples include factoring x^2 - 5x + 6 = 0.",
       "status": "APPROVED",
-      "feedback": "Well articulated lesson plan. Detailed and aligns perfectly with the Ogun State unified curriculum.",
+      "feedback": "Well articulated lesson plan. Detailed and aligns perfectly with the international standard unified curriculum.",
       "createdAt": "2026-07-10T08:00:00.000Z",
       "reviewedAt": "2026-07-10T12:00:00.000Z"
     },
