@@ -948,34 +948,38 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => handleQuickLogin("admin@eduos.com", "admin123")}
-                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors cursor-pointer"
                   >
                     <div className="text-[11px] font-bold text-slate-700">Administrator</div>
                     <div className="text-[10px] font-mono text-slate-400">admin@eduos.com</div>
+                    <div className="text-[9px] font-mono text-indigo-500 font-semibold">Pass: admin123</div>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin("adebayo@eduos.com", "adebayo123")}
-                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                    onClick={() => handleQuickLogin("teacher@eduos.com", "teacher123")}
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors cursor-pointer"
                   >
                     <div className="text-[11px] font-bold text-slate-700">Teacher</div>
-                    <div className="text-[10px] font-mono text-slate-400">adebayo@eduos.com</div>
+                    <div className="text-[10px] font-mono text-slate-400">teacher@eduos.com</div>
+                    <div className="text-[9px] font-mono text-indigo-500 font-semibold">Pass: teacher123</div>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleQuickLogin("student@eduos.com", "student123")}
-                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors cursor-pointer"
                   >
                     <div className="text-[11px] font-bold text-slate-700">Student</div>
                     <div className="text-[10px] font-mono text-slate-400">student@eduos.com</div>
+                    <div className="text-[9px] font-mono text-indigo-500 font-semibold">Pass: student123</div>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleQuickLogin("parent@eduos.com", "parent123")}
-                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors"
+                    className="text-left px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-colors cursor-pointer"
                   >
                     <div className="text-[11px] font-bold text-slate-700">Parent</div>
                     <div className="text-[10px] font-mono text-slate-400">parent@eduos.com</div>
+                    <div className="text-[9px] font-mono text-indigo-500 font-semibold">Pass: parent123</div>
                   </button>
                 </div>
               </div>

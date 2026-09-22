@@ -486,6 +486,7 @@ const INITIAL_SEED_DATA: LocalDbSchema = {
   users: [
     { id: "u-1", email: "admin@eduos.com", name: "Dr. Charles Kolawole", password: "admin123", role: "ADMIN", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-2", email: "teacher@eduos.com", name: "Mrs. Florence Adebayo", password: "teacher123", role: "TEACHER", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
+    { id: "u-2-adebayo", email: "adebayo@eduos.com", name: "Mrs. Florence Adebayo", password: "teacher123", role: "TEACHER", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-3", email: "student@eduos.com", name: "Tunde Folayan", password: "student123", role: "STUDENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-4", email: "parent@eduos.com", name: "Chief Folayan", password: "parent123", role: "PARENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-5", email: "adebayosamuel015@gmail.com", name: "Super Admin", password: "Hibilero@2104", role: "ADMIN", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },

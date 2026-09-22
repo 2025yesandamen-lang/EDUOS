@@ -21,6 +21,16 @@
       "createdAt": "2026-07-11T09:52:37.839Z"
     },
     {
+      "id": "u-2-adebayo",
+      "email": "adebayo@eduos.com",
+      "name": "Mrs. Florence Adebayo",
+      "password": "teacher123",
+      "role": "TEACHER",
+      "tenantId": "default",
+      "isActive": true,
+      "createdAt": "2026-07-11T09:52:37.839Z"
+    },
+    {
       "id": "u-3",
       "email": "student@eduos.com",
       "name": "Tunde Folayan",
