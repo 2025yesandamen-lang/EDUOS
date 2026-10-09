@@ -2,10 +2,20 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    define: {
+      'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL || 'https://qobtybbklcqmdwsrwito.supabase.co'),
+      'process.env.SUPABASE_PUBLISHABLE_KEY': JSON.stringify(process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_0peHIUrniDPHZMfkLxnsWQ_OSjfuKLZ'),
+      'process.env.VITE_SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL || 'https://qobtybbklcqmdwsrwito.supabase.co'),
+      'process.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_0peHIUrniDPHZMfkLxnsWQ_OSjfuKLZ'),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

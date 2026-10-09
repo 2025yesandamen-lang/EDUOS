@@ -25,6 +25,7 @@ import {
   Check
 } from "lucide-react";
 import { Exam, Question, Student, AttendanceRecord } from "../types";
+import { isUserSuperAdmin } from "../utils/auth";
 import ReportExportModal from "./ReportExportModal";
 
 interface TeacherAssessmentsProps {
@@ -111,11 +112,7 @@ export default function TeacherAssessments({ activeSection, token, user }: Teach
   const [resultsSearchQuery, setResultsSearchQuery] = useState("");
 
   useEffect(() => {
-    const isSuperAdmin = user?.tenantId === "default" || [
-      "adebayosamuel015@gmail.com",
-      "admin@eduos.com",
-      "sasinnovationgroup@gmail.com"
-    ].includes(user?.email?.toLowerCase());
+    const isSuperAdmin = isUserSuperAdmin(user);
 
     if (isSuperAdmin) {
       const fetchTenants = async () => {

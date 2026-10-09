@@ -21,12 +21,14 @@ import {
   Database,
   CloudUpload,
   Sparkles,
-  WifiOff
+  WifiOff,
+  Lock
 } from "lucide-react";
 import { Exam, Question, ExamAttempt } from "../types";
 import ReportExportModal from "./ReportExportModal";
 import ExamTimer from "./ExamTimer";
 import StudentPerformanceSummary from "./StudentPerformanceSummary";
+import { safeReadJson } from "../utils/apiHelper";
 
 interface StudentCBTProps {
   activeSection: "student-exams" | "student-history" | "student-timetable";
@@ -149,6 +151,24 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
   const [violationsCount, setViolationsCount] = useState(0);
   const [showViolationModal, setShowViolationModal] = useState(false);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
+  const [showIncompleteSubmitModal, setShowIncompleteSubmitModal] = useState(false);
+  const [unansweredSubmitList, setUnansweredSubmitList] = useState<number[]>([]);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+
+  // Strict non-blank answer evaluation
+  const isQuestionAnswered = (qId: string): boolean => {
+    const ans = savedAnswers[qId];
+    if (ans === undefined || ans === null) return false;
+    if (typeof ans === "string") return ans.trim().length > 0;
+    return false;
+  };
+
+  const isCurrentQuestionAnswered = (): boolean => {
+    if (!examQuestions || examQuestions.length === 0) return false;
+    const currentQ = examQuestions[currentQIndex];
+    if (!currentQ) return false;
+    return isQuestionAnswered(currentQ.id);
+  };
 
   // Results State
   const [viewingResult, setViewingResult] = useState<any | null>(null);
@@ -420,12 +440,15 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       setShowViolationModal(false);
       setFlaggedQuestions({});
       setPaletteFilter("ALL");
+      setNavigationError(null);
+      setShowIncompleteSubmitModal(false);
+      setUnansweredSubmitList([]);
 
       // 1. Fetch entire exam details
       const examRes = await fetch(`/api/exams/${examId}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      const examData = await examRes.json();
+      const examData = await safeReadJson(examRes);
       if (!examRes.ok) throw new Error(examData.message || "Failed to load exam details.");
 
       // 2. POST to start session
@@ -437,7 +460,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
         },
         body: JSON.stringify({ studentId: studentUser.studentId })
       });
-      const startData = await startRes.json();
+      const startData = await safeReadJson(startRes);
       if (!startRes.ok) throw new Error(startData.message || "Failed to initiate exam session.");
 
       setActiveExam(examData);
@@ -555,6 +578,9 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
 
   // Select Option Action
   const handleSelectAnswer = (qId: string, value: string) => {
+    if (value && value.trim().length > 0) {
+      setNavigationError(null);
+    }
     const updated = { ...savedAnswers, [qId]: value };
     setSavedAnswers(updated);
     
@@ -570,7 +596,60 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
     saveAnswerToBackend(qId, value);
   };
 
-  // Submit Exam manually Action
+  // Sequential Navigation: Move to Next Question (strictly requires answering current question)
+  const handleNextQuestion = () => {
+    const currentQ = examQuestions[currentQIndex];
+    if (!currentQ) return;
+
+    if (!isQuestionAnswered(currentQ.id)) {
+      setNavigationError(
+        `⚠️ Answer Required: You cannot move to the next question without answering Question ${currentQIndex + 1}. Leaving the answer blank is not permitted.`
+      );
+      return;
+    }
+
+    setNavigationError(null);
+    if (currentQIndex < examQuestions.length - 1) {
+      setCurrentQIndex(prev => prev + 1);
+    }
+  };
+
+  // Move to Previous Question
+  const handlePrevQuestion = () => {
+    setNavigationError(null);
+    if (currentQIndex > 0) {
+      setCurrentQIndex(prev => prev - 1);
+    }
+  };
+
+  // Palette Navigation: prevents skipping ahead of any unanswered questions
+  const handlePaletteQuestionSelect = (targetIdx: number) => {
+    if (targetIdx === currentQIndex) return;
+
+    if (targetIdx < currentQIndex) {
+      // Allowed to go backwards to review previous questions
+      setNavigationError(null);
+      setCurrentQIndex(targetIdx);
+      return;
+    }
+
+    // Moving forward: verify that all questions prior to targetIdx are answered
+    for (let i = 0; i < targetIdx; i++) {
+      const q = examQuestions[i];
+      if (!isQuestionAnswered(q.id)) {
+        setNavigationError(
+          `⚠️ Action Blocked: You cannot skip ahead to Question ${targetIdx + 1} without answering Question ${i + 1}. Leaving questions blank is not permitted.`
+        );
+        setCurrentQIndex(i); // Navigate candidate to the first blank question
+        return;
+      }
+    }
+
+    setNavigationError(null);
+    setCurrentQIndex(targetIdx);
+  };
+
+  // Submit Exam manually Action: strictly disallow submission until all questions are answered
   const handleSubmitExam = async () => {
     if (!activeExam || !activeAttempt) return;
 
@@ -579,11 +658,41 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
       return;
     }
 
+    // Check if ALL questions are answered without leaving any space blank
+    const blankQuestionNumbers: number[] = [];
+    examQuestions.forEach((q, idx) => {
+      if (!isQuestionAnswered(q.id)) {
+        blankQuestionNumbers.push(idx + 1);
+      }
+    });
+
+    if (blankQuestionNumbers.length > 0) {
+      setUnansweredSubmitList(blankQuestionNumbers);
+      setShowIncompleteSubmitModal(true);
+      setNavigationError(
+        `⚠️ Submission Blocked: You cannot submit until all questions are answered. ${blankQuestionNumbers.length} question(s) remain blank.`
+      );
+      return;
+    }
+
     setShowSubmitConfirmModal(true);
   };
 
   const handleConfirmSubmit = async () => {
     if (!activeExam) return;
+
+    // Strict validation safeguard against submitting with blank questions
+    const blankQuestions = examQuestions.filter(q => !isQuestionAnswered(q.id));
+    if (blankQuestions.length > 0) {
+      setShowSubmitConfirmModal(false);
+      const blankNums = examQuestions
+        .map((q, idx) => (!isQuestionAnswered(q.id) ? idx + 1 : null))
+        .filter((n): n is number => n !== null);
+      setUnansweredSubmitList(blankNums);
+      setShowIncompleteSubmitModal(true);
+      return;
+    }
+
     setShowSubmitConfirmModal(false);
 
     try {
@@ -872,22 +981,52 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                 <Bookmark className="h-4 w-4 text-indigo-500" />
                 <span className="font-bold text-slate-700">Answered Progress:</span>
                 <span className="font-mono text-indigo-600 font-extrabold">
-                  {examQuestions.filter(q => savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "").length} / {examQuestions.length} ({examQuestions.length > 0 ? Math.round((examQuestions.filter(q => savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "").length / examQuestions.length) * 100) : 0}%)
+                  {examQuestions.filter(q => isQuestionAnswered(q.id)).length} / {examQuestions.length} ({examQuestions.length > 0 ? Math.round((examQuestions.filter(q => isQuestionAnswered(q.id)).length / examQuestions.length) * 100) : 0}%)
                 </span>
               </div>
               <div className="flex-1 max-w-md h-2 bg-slate-200 rounded-full overflow-hidden">
                 <div 
                   className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-full transition-all duration-300" 
-                  style={{ width: `${examQuestions.length > 0 ? Math.round((examQuestions.filter(q => savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "").length / examQuestions.length) * 100) : 0}%` }}
+                  style={{ width: `${examQuestions.length > 0 ? Math.round((examQuestions.filter(q => isQuestionAnswered(q.id)).length / examQuestions.length) * 100) : 0}%` }}
                 ></div>
               </div>
             </div>
+
+            {/* Prominent Navigation Error / Action Blocked Alert Banner */}
+            {navigationError && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-3.5 text-amber-950 text-xs flex items-center justify-between shadow-sm animate-pulse">
+                <div className="flex items-center space-x-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 animate-bounce" />
+                  <span className="font-bold leading-relaxed">{navigationError}</span>
+                </div>
+                <button
+                  onClick={() => setNavigationError(null)}
+                  className="text-amber-800 hover:text-amber-950 font-bold ml-2 text-xs cursor-pointer px-2 py-0.5 rounded hover:bg-amber-100 flex-shrink-0"
+                  title="Dismiss alert"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Render assessed question text */}
             {examQuestions.length > 0 ? (
               <div className="space-y-6 flex-1 py-4">
                 <div className="flex items-center justify-between bg-slate-50/60 p-2.5 rounded-xl border border-slate-100/80">
-                  <span className="text-xs font-bold text-slate-400 font-mono">Question {currentQIndex + 1} of {examQuestions.length}</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-bold text-slate-400 font-mono">Question {currentQIndex + 1} of {examQuestions.length}</span>
+                    {isCurrentQuestionAnswered() ? (
+                      <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-mono font-bold flex items-center space-x-1">
+                        <Check className="h-3 w-3 text-emerald-600" />
+                        <span>Answered</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded font-mono font-bold flex items-center space-x-1">
+                        <AlertTriangle className="h-3 w-3 text-amber-500" />
+                        <span>Answer Required (Do Not Leave Blank)</span>
+                      </span>
+                    )}
+                  </div>
                   
                   <div className="flex items-center space-x-2">
                     <button
@@ -922,9 +1061,9 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                         <button
                           key={oIdx}
                           onClick={() => handleSelectAnswer(examQuestions[currentQIndex].id, opt)}
-                          className={`w-full text-left p-3.5 rounded-xl border-2 text-sm font-semibold transition-all flex items-center justify-between ${
+                          className={`w-full text-left p-3.5 rounded-xl border-2 text-sm font-semibold transition-all flex items-center justify-between cursor-pointer ${
                             isSelected
-                              ? "bg-indigo-50 border-indigo-600 text-indigo-800"
+                              ? "bg-indigo-50 border-indigo-600 text-indigo-800 shadow-xs"
                               : "border-slate-100 hover:border-slate-200 text-slate-700 bg-slate-50/50"
                           }`}
                         >
@@ -944,9 +1083,9 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                         <button
                           key={opt}
                           onClick={() => handleSelectAnswer(examQuestions[currentQIndex].id, opt)}
-                          className={`py-6 rounded-xl border-2 text-center text-sm font-bold transition-all ${
+                          className={`py-6 rounded-xl border-2 text-center text-sm font-bold transition-all cursor-pointer ${
                             isSelected
-                              ? "bg-indigo-50 border-indigo-600 text-indigo-800"
+                              ? "bg-indigo-50 border-indigo-600 text-indigo-800 shadow-xs"
                               : "border-slate-100 hover:border-slate-200 text-slate-700 bg-slate-50/50"
                           }`}
                         >
@@ -959,12 +1098,27 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
 
                 {examQuestions[currentQIndex].type === "ESSAY" && (
                   <div className="space-y-2 mt-4">
-                    <label className="text-xs font-bold text-slate-400 uppercase">Write Essay response</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-400 uppercase">Write Essay response</label>
+                      {!savedAnswers[examQuestions[currentQIndex].id] || savedAnswers[examQuestions[currentQIndex].id].trim() === "" ? (
+                        <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                          Required: Space cannot be left blank
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Check className="h-3 w-3" /> Answer entered ({savedAnswers[examQuestions[currentQIndex].id].trim().length} chars)
+                        </span>
+                      )}
+                    </div>
                     <textarea
-                      placeholder="Type your essay formulation. The evaluation schema scans keyword matches..."
+                      placeholder="Type your essay formulation here. You must provide an answer before moving to the next question..."
                       value={savedAnswers[examQuestions[currentQIndex].id] || ""}
                       onChange={(e) => handleSelectAnswer(examQuestions[currentQIndex].id, e.target.value)}
-                      className="w-full border border-slate-200 p-4 rounded-xl text-xs h-40 focus:outline-indigo-500 text-slate-800"
+                      className={`w-full border p-4 rounded-xl text-xs h-40 focus:outline-indigo-500 text-slate-800 transition-colors ${
+                        !savedAnswers[examQuestions[currentQIndex].id] || savedAnswers[examQuestions[currentQIndex].id].trim() === ""
+                          ? "border-amber-300 bg-amber-50/15"
+                          : "border-slate-200 bg-white"
+                      }`}
                     />
                   </div>
                 )}
@@ -974,29 +1128,59 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
             )}
 
             {/* Bottom sequential navigation bar */}
-            <div className="flex items-center justify-between border-t border-slate-100 pt-4 mt-auto">
+            <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-100 pt-4 mt-auto gap-3">
               <button
                 disabled={currentQIndex === 0}
-                onClick={() => setCurrentQIndex(prev => prev - 1)}
-                className="flex items-center space-x-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handlePrevQuestion}
+                className="w-full sm:w-auto flex items-center justify-center space-x-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <ChevronLeft className="h-4 w-4" />
-                <span>Prev</span>
+                <span>Prev Question</span>
               </button>
 
-              <button
-                onClick={handleSubmitExam}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-6 py-2.5 rounded-lg transition-all shadow-md shadow-emerald-100"
-              >
-                Submit Examination
-              </button>
+              <div className="flex items-center space-x-2 w-full sm:w-auto justify-center">
+                {examQuestions.filter(q => isQuestionAnswered(q.id)).length < examQuestions.length ? (
+                  <button
+                    onClick={handleSubmitExam}
+                    className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-black text-xs px-5 py-2.5 rounded-lg transition-all shadow-md shadow-amber-100 flex items-center justify-center space-x-1.5 cursor-pointer"
+                    title="All questions must be answered before you can submit"
+                  >
+                    <Lock className="h-3.5 w-3.5" />
+                    <span>Submit ({examQuestions.filter(q => isQuestionAnswered(q.id)).length}/{examQuestions.length} Answered)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmitExam}
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-6 py-2.5 rounded-lg transition-all shadow-md shadow-emerald-100 flex items-center justify-center space-x-1.5 cursor-pointer"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    <span>Submit Examination</span>
+                  </button>
+                )}
+              </div>
 
               <button
                 disabled={currentQIndex === examQuestions.length - 1}
-                onClick={() => setCurrentQIndex(prev => prev + 1)}
-                className="flex items-center space-x-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleNextQuestion}
+                className={`w-full sm:w-auto flex items-center justify-center space-x-1.5 px-5 py-2.5 text-xs font-bold rounded-lg transition-all ${
+                  currentQIndex === examQuestions.length - 1
+                    ? "bg-slate-100 text-slate-400 cursor-not-allowed opacity-40"
+                    : isCurrentQuestionAnswered()
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 cursor-pointer"
+                      : "bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer"
+                }`}
+                title={
+                  currentQIndex === examQuestions.length - 1
+                    ? "Final question reached"
+                    : isCurrentQuestionAnswered()
+                      ? "Proceed to next question"
+                      : "Answer question to unlock Next"
+                }
               >
                 <span>Next</span>
+                {!isCurrentQuestionAnswered() && currentQIndex < examQuestions.length - 1 && (
+                  <Lock className="h-3 w-3 text-amber-700" />
+                )}
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
@@ -1016,7 +1200,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
               <div className="grid grid-cols-2 gap-1 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
                 {(["ALL", "ANSWERED", "UNANSWERED", "FLAGGED"] as const).map((filter) => {
                   const count = examQuestions.filter(q => {
-                    const ans = savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "";
+                    const ans = isQuestionAnswered(q.id);
                     if (filter === "ANSWERED") return ans;
                     if (filter === "UNANSWERED") return !ans;
                     if (filter === "FLAGGED") return flaggedQuestions[q.id];
@@ -1027,7 +1211,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                     <button
                       key={filter}
                       onClick={() => setPaletteFilter(filter)}
-                      className={`text-[9px] font-black py-1 px-1 rounded-lg transition-all capitalize flex items-center justify-between ${
+                      className={`text-[9px] font-black py-1 px-1 rounded-lg transition-all capitalize flex items-center justify-between cursor-pointer ${
                         paletteFilter === filter
                           ? "bg-indigo-600 text-white shadow-sm"
                           : "text-slate-500 hover:bg-slate-200/60"
@@ -1042,7 +1226,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
 
               <div className="grid grid-cols-4 sm:grid-cols-6 xl:grid-cols-4 gap-2">
                 {examQuestions.map((q, idx) => {
-                  const isAnswered = savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "";
+                  const isAnswered = isQuestionAnswered(q.id);
                   const isFlagged = flaggedQuestions[q.id];
 
                   // Apply filter condition
@@ -1054,8 +1238,8 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                   return (
                     <button
                       key={q.id}
-                      onClick={() => setCurrentQIndex(idx)}
-                      className={`h-9 w-9 rounded-xl flex flex-col items-center justify-center relative text-xs font-bold transition-all ${
+                      onClick={() => handlePaletteQuestionSelect(idx)}
+                      className={`h-9 w-9 rounded-xl flex flex-col items-center justify-center relative text-xs font-bold transition-all cursor-pointer ${
                         isActive
                           ? "bg-indigo-600 text-white font-extrabold ring-4 ring-indigo-100"
                           : isFlagged
@@ -1064,7 +1248,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                               ? "bg-emerald-50 text-emerald-700 border border-emerald-300"
                               : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                       }`}
-                      title={`Question ${idx + 1}${isFlagged ? " (Flagged)" : ""}${isAnswered ? " (Answered)" : ""}`}
+                      title={`Question ${idx + 1}${isFlagged ? " (Flagged)" : ""}${isAnswered ? " (Answered)" : " (Blank / Required)"}`}
                     >
                       <span>{idx + 1}</span>
                       {isFlagged && (
@@ -1146,7 +1330,7 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                   <div className="flex justify-between text-slate-500 font-medium">
                     <span>Answered:</span>
                     <span className="font-bold text-emerald-600">
-                      {examQuestions.filter(q => savedAnswers[q.id] !== undefined && savedAnswers[q.id] !== "").length} / {examQuestions.length}
+                      {examQuestions.filter(q => isQuestionAnswered(q.id)).length} / {examQuestions.length}
                     </span>
                   </div>
                   <div className="flex justify-between text-slate-500 font-medium">
@@ -1166,16 +1350,82 @@ export default function StudentCBT({ activeSection, token, studentUser, isSimula
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={() => setShowSubmitConfirmModal(false)}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold py-2.5 px-4 rounded-lg transition-all"
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold py-2.5 px-4 rounded-lg transition-all cursor-pointer"
                   >
                     Cancel, Review
                   </button>
                   <button
                     onClick={handleConfirmSubmit}
                     disabled={loading}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 px-4 rounded-lg transition-all"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 px-4 rounded-lg transition-all cursor-pointer"
                   >
                     {loading ? "Submitting..." : "Yes, Submit Now"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Incomplete Submission Modal (Strictly prevents submission until all questions are answered) */}
+          {showIncompleteSubmitModal && (
+            <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 text-center space-y-4 border border-amber-300 shadow-2xl animate-scale-up">
+                <div className="mx-auto w-14 h-14 bg-amber-50 rounded-2xl border border-amber-200 flex items-center justify-center text-amber-600">
+                  <AlertTriangle className="h-8 w-8 animate-bounce" />
+                </div>
+                <h3 className="text-slate-800 font-extrabold text-lg">Cannot Submit Incomplete Exam</h3>
+                <p className="text-slate-600 text-xs leading-relaxed font-semibold">
+                  You are not permitted to submit this examination until all questions have been answered. Leaving questions or answers blank is strictly prohibited.
+                </p>
+
+                <div className="bg-amber-50/70 border border-amber-200 p-4 rounded-xl text-left space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center font-bold text-amber-950">
+                    <span className="flex items-center space-x-1.5">
+                      <Lock className="h-3.5 w-3.5 text-amber-700" />
+                      <span>Unanswered Questions:</span>
+                    </span>
+                    <span className="font-mono bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full text-[11px] font-black">
+                      {unansweredSubmitList.length} Left Blank
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium">Click any question below to complete it:</p>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
+                    {unansweredSubmitList.map((num) => (
+                      <button
+                        key={num}
+                        onClick={() => {
+                          setShowIncompleteSubmitModal(false);
+                          setCurrentQIndex(num - 1);
+                          setNavigationError(null);
+                        }}
+                        className="bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold px-2.5 py-1.5 rounded-lg text-xs transition-all shadow-xs cursor-pointer flex items-center space-x-1"
+                        title={`Go to Question ${num}`}
+                      >
+                        <span>Question #{num}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setShowIncompleteSubmitModal(false);
+                      if (unansweredSubmitList.length > 0) {
+                        setCurrentQIndex(unansweredSubmitList[0] - 1);
+                        setNavigationError(null);
+                      }
+                    }}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 px-4 rounded-xl transition-all shadow-md shadow-indigo-100 cursor-pointer flex items-center justify-center space-x-1.5"
+                  >
+                    <span>Jump to Question #{unansweredSubmitList[0] || 1}</span>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setShowIncompleteSubmitModal(false)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold py-2.5 px-4 rounded-xl transition-all cursor-pointer"
+                  >
+                    Review
                   </button>
                 </div>
               </div>

@@ -19,6 +19,7 @@ import {
   Printer
 } from "lucide-react";
 import { Student, AdmissionApplication, SchoolClass, TimetableEntry, Parent } from "../types";
+import { isUserSuperAdmin } from "../utils/auth";
 import ReportExportModal from "./ReportExportModal";
 
 interface AdminERPProps {
@@ -407,7 +408,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
     setSelectedStudent(null);
     setSelectedStudentIds([]);
 
-    if (currentUser?.tenantId === "default") {
+    if (isUserSuperAdmin(currentUser)) {
       fetchTenants();
     } else {
       fetchStudents();
@@ -510,11 +511,11 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
           name: newStudentName,
           email: newStudentEmail,
           classId: newStudentClassId,
-          platform: currentUser?.tenantId === "default" ? newStudentPlatform : "CBT PRO X (EDUOS)",
+          platform: isUserSuperAdmin(currentUser) ? newStudentPlatform : "CBT PRO X (EDUOS)",
           stream: newStudentStream,
           room: newStudentRoom,
           hostel: newStudentHostel,
-          tenantId: currentUser?.tenantId === "default" ? selectedTenantId : undefined,
+          tenantId: isUserSuperAdmin(currentUser) ? selectedTenantId : undefined,
           parentName: newStudentParentName,
           parentEmail: newStudentParentEmail,
           parentPhone: newStudentParentPhone
@@ -537,7 +538,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
         setNewStudentParentName("");
         setNewStudentParentEmail("");
         setNewStudentParentPhone("");
-        if (currentUser?.tenantId === "default") {
+        if (isUserSuperAdmin(currentUser)) {
           fetchStudents(selectedTenantId);
         } else {
           fetchStudents();
@@ -562,6 +563,11 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
 
     if (!newSlotClassId || !newSlotSubject || !newSlotTeacher || !newSlotRoom) {
       setErrorMsg("Please provide all timetable slot parameters.");
+      return;
+    }
+
+    if (newSlotStart >= newSlotEnd) {
+      setErrorMsg(`Invalid time window: Start time (${newSlotStart}) must be earlier than End time (${newSlotEnd}).`);
       return;
     }
 
@@ -936,14 +942,14 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                 <Users className="h-5 w-5 text-indigo-500" />
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Active Student Roster</h3>
-                  {currentUser?.tenantId === "default" && (
+                  {isUserSuperAdmin(currentUser) && (
                     <span className="text-[10px] text-indigo-600 font-mono font-bold uppercase tracking-wider block">SUPER ADMIN PLATFORM</span>
                   )}
                 </div>
               </div>
 
               <div className="flex items-center space-x-3 self-end sm:self-auto">
-                {currentUser?.tenantId === "default" && (
+                {isUserSuperAdmin(currentUser) && (
                   <div className="flex items-center space-x-2">
                     <span className="text-[10px] text-slate-400 font-bold uppercase">School:</span>
                     <select
@@ -1034,7 +1040,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                     </th>
                     <th className="py-3.5 px-6">Reg Number</th>
                     <th className="py-3.5 px-6">Student Name</th>
-                    {currentUser?.tenantId === "default" && <th className="py-3.5 px-6">Platform</th>}
+                    {isUserSuperAdmin(currentUser) && <th className="py-3.5 px-6">Platform</th>}
                     <th className="py-3.5 px-6">Class (e.g. SS1)</th>
                     <th className="py-3.5 px-6">Stream/Subject</th>
                     <th className="py-3.5 px-6">Allocated Room</th>
@@ -1064,7 +1070,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                       </td>
                       <td className="py-3.5 px-6 font-mono font-bold text-slate-700">{stu.registrationNumber}</td>
                       <td className="py-3.5 px-6 font-semibold text-slate-800">{stu.name}</td>
-                      {currentUser?.tenantId === "default" && (
+                      {isUserSuperAdmin(currentUser) && (
                         <td className="py-3.5 px-6 text-slate-500 font-medium text-xs">{stu.platform || "CBT PRO"}</td>
                       )}
                       <td className="py-3.5 px-6 text-slate-600">
@@ -1146,7 +1152,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                   </div>
                 </div>
 
-                <div className={`grid ${currentUser?.tenantId === "default" ? "grid-cols-4" : "grid-cols-3"} gap-3`}>
+                <div className={`grid ${isUserSuperAdmin(currentUser) ? "grid-cols-4" : "grid-cols-3"} gap-3`}>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">Reg Index</span>
                     <span className="font-mono text-xs font-bold text-slate-700">{selectedStudent.registrationNumber}</span>
@@ -1167,7 +1173,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                       {selectedStudent.status || "Active"}
                     </span>
                   </div>
-                  {currentUser?.tenantId === "default" && (
+                  {isUserSuperAdmin(currentUser) && (
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                       <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">Platform</span>
                       <span className="text-xs font-bold text-indigo-600 truncate block">{selectedStudent.platform || "CBT PRO"}</span>
@@ -1285,7 +1291,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                 />
               </div>
 
-              <div className={`grid ${currentUser?.tenantId === "default" ? "grid-cols-2" : "grid-cols-1"} gap-3`}>
+              <div className={`grid ${isUserSuperAdmin(currentUser) ? "grid-cols-2" : "grid-cols-1"} gap-3`}>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Class Room</label>
                   <select
@@ -1300,7 +1306,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                   </select>
                 </div>
 
-                {currentUser?.tenantId === "default" && (
+                {isUserSuperAdmin(currentUser) && (
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-indigo-700 uppercase">Platform Name</label>
                     <select
@@ -1315,7 +1321,7 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
                 )}
               </div>
 
-              {currentUser?.tenantId === "default" && (
+              {isUserSuperAdmin(currentUser) && (
                 <div className="space-y-1 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100">
                   <label className="text-xs font-bold text-indigo-800 uppercase block mb-1">Target School / Tenant (Super Admin Only)</label>
                   <select
@@ -1652,16 +1658,44 @@ export default function AdminERP({ activeSection, token, currentUser }: AdminERP
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {classesList.map((cls) => (
-                <div key={cls.id} className="border border-slate-100 p-4 rounded-xl hover:border-slate-200 transition-all space-y-2 bg-slate-50/50 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800 text-base">{cls.name}</span>
-                    <span className="text-[10px] font-mono bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">{cls.id}</span>
+              {classesList.map((cls) => {
+                const enrolled = studentsList.filter(s => s.classId === cls.id).length;
+                const capacity = (cls as any).capacity || 35;
+                const isOverCapacity = enrolled > capacity;
+                const pct = Math.min(100, Math.round((enrolled / capacity) * 100));
+
+                return (
+                  <div key={cls.id} className="border border-slate-100 p-4 rounded-xl hover:border-slate-200 transition-all space-y-2 bg-slate-50/50 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800 text-base">{cls.name}</span>
+                      <span className="text-[10px] font-mono bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">{cls.id}</span>
+                    </div>
+                    <p className="text-xs text-slate-500"><span className="font-bold text-slate-600">Location:</span> {cls.room}</p>
+                    <p className="text-xs text-slate-500"><span className="font-bold text-slate-600">Primary Form Tutor:</span> {cls.primaryTeacher}</p>
+                    
+                    <div className="pt-2 border-t border-slate-200/60">
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-slate-500 font-medium">Class Roster:</span>
+                        <span className={`font-bold ${isOverCapacity ? "text-rose-600 font-mono" : "text-slate-700 font-mono"}`}>
+                          {enrolled} / {capacity} Enrolled
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all ${isOverCapacity ? "bg-rose-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500"}`} 
+                          style={{ width: `${pct}%` }} 
+                        />
+                      </div>
+                      {isOverCapacity && (
+                        <div className="mt-1.5 flex items-center space-x-1 text-[10px] text-rose-600 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                          <span>OVERFLOW: Capacity exceeded by {enrolled - capacity} student{enrolled - capacity > 1 ? "s" : ""}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-500"><span className="font-bold text-slate-600">Location:</span> {cls.room}</p>
-                  <p className="text-xs text-slate-500"><span className="font-bold text-slate-600">Primary Form Tutor:</span> {cls.primaryTeacher}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

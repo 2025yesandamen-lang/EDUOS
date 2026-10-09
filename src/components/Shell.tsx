@@ -24,6 +24,7 @@ import {
   BarChart3
 } from "lucide-react";
 import { UserRole } from "../types";
+import { isUserSuperAdmin } from "../utils/auth";
 import ReportExportModal from "./ReportExportModal";
 
 interface ShellProps {
@@ -64,6 +65,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
     if (user.role === "ADMIN") {
       const links = [
         ...common,
+        { id: "ai-chatbot", label: "Gemini Chatbot", icon: Bot },
         { id: "students", label: "Student SIS", icon: Users },
         { id: "admissions", label: "Admissions Workflow", icon: UserCheck },
         { id: "classes", label: "Classes & Rooms", icon: School },
@@ -80,13 +82,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
         { id: "ai-advisory", label: "Administrative AI Advisor", icon: Sparkles },
       ];
 
-      const isSuperAdminEmail = [
-        "adebayosamuel015@gmail.com",
-        "admin@eduos.com",
-        "sasinnovationgroup@gmail.com"
-      ].includes(user.email?.toLowerCase());
-
-      if (user.tenantId === "super-admin" || isSuperAdminEmail) {
+      if (isUserSuperAdmin(user)) {
         links.push({ id: "tenants", label: "Multi-tenant Management", icon: Layers });
       }
 
@@ -101,6 +97,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
     if (user.role === "TEACHER") {
       return [
         ...common,
+        { id: "ai-chatbot", label: "Gemini Chatbot", icon: Bot },
         { id: "exams", label: "Assessment Cloud", icon: Award },
         { id: "continuous-assessment", label: "Continuous Assessment", icon: ClipboardCheck },
         { id: "results", label: "Results & GPA", icon: BarChart3 },
@@ -117,6 +114,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
     if (user.role === "STUDENT") {
       return [
         ...common,
+        { id: "ai-chatbot", label: "Gemini Chatbot", icon: Bot },
         { id: "student-exams", label: "CBT Examinations", icon: Award },
         { id: "student-history", label: "Attempt History", icon: FileText },
         { id: "student-timetable", label: "Class Timetable", icon: Calendar },
@@ -129,6 +127,7 @@ export default function Shell({ user, tenant, activeTab, setActiveTab, onLogout,
     if (user.role === "PARENT") {
       return [
         ...common,
+        { id: "ai-chatbot", label: "Gemini Chatbot", icon: Bot },
         { id: "parent-portal", label: "Guardian Dashboard", icon: School },
         { id: "parent-fees", label: "Child's Tuition Billing", icon: CreditCard },
         { id: "parent-chat", label: "AI Advisor Chat", icon: Bot },

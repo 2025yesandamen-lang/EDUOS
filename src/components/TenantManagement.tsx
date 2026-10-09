@@ -5,9 +5,10 @@ import {
   Trash2, ExternalLink, ShieldAlert, CheckCircle2, 
   Layers, Activity, Sparkles, Palette, Check, AlertCircle,
   Archive, Download, List, Grid, Upload, X, Users, BarChart2, TrendingUp, Search, Eye,
-  Calendar, ShieldCheck
+  Calendar, ShieldCheck, Copy, CheckCheck, Link
 } from "lucide-react";
 import { InstitutionImageUploader } from "./InstitutionImageUploader";
+import { getSchoolLiveLinks, RENDER_LIVE_HOST } from "../utils/auth";
 import {
   ResponsiveContainer,
   BarChart,
@@ -121,6 +122,30 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
+  // Live Link Copy Feedback State
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
+
+  const handleCopyLink = (url: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = url;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopiedLink(url);
+      setTimeout(() => {
+        setCopiedLink(null);
+      }, 2500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
   const compressImage = (base64Str: string, maxWidth: number, maxHeight: number, quality: number): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -159,7 +184,7 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 15 * 1024 * 1024) {
-        alert("Logo file is too large. Please select an image under 15MB.");
+        setErrorMsg("Logo file is too large. Please select an image under 15MB.");
         return;
       }
       const reader = new FileReader();
@@ -175,7 +200,7 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 15 * 1024 * 1024) {
-        alert("Background picture is too large. Please select an image under 15MB.");
+        setErrorMsg("Background picture is too large. Please select an image under 15MB.");
         return;
       }
       const reader = new FileReader();
@@ -1246,9 +1271,22 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                             )}
                             <div className="min-w-0">
                               <h4 className="font-bold text-slate-800 tracking-tight leading-tight truncate max-w-[180px] group-hover:text-indigo-600 transition-colors">{t.name}</h4>
-                              <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                                /school/{t.subdomain}
-                              </span>
+                              <div className="flex items-center space-x-1.5 mt-0.5">
+                                <span className="text-[10px] text-indigo-600 font-mono bg-indigo-50/80 px-1.5 py-0.5 rounded border border-indigo-150 inline-block font-semibold">
+                                  /school/{t.subdomain}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyLink(`${RENDER_LIVE_HOST}/school/${t.subdomain}`);
+                                  }}
+                                  className="text-[9px] font-mono font-bold text-slate-400 hover:text-indigo-600 hover:bg-slate-100 px-1 py-0.5 rounded cursor-pointer transition-colors"
+                                  title="Copy Live URL to clipboard"
+                                >
+                                  {copiedLink === `${RENDER_LIVE_HOST}/school/${t.subdomain}` ? "✓ Copied" : "Copy Live Link"}
+                                </button>
+                              </div>
                             </div>
                           </button>
                         </div>
@@ -1314,11 +1352,26 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                         <div className="flex items-center justify-end space-x-1">
                           <button
                             type="button"
-                            onClick={() => onSelectTenantPage && onSelectTenantPage(t.subdomain)}
+                            onClick={() => {
+                              const liveUrl = `${RENDER_LIVE_HOST}/school/${t.subdomain}`;
+                              window.open(liveUrl, "_blank");
+                            }}
                             className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                            title="Launch Tenant Dashboard"
+                            title={`Open Live School Portal in browser (https://eduos-zf0v.onrender.com/school/${t.subdomain})`}
                           >
                             <ExternalLink className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyLink(`${RENDER_LIVE_HOST}/school/${t.subdomain}`)}
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                            title={`Copy Live Hosted URL for ${t.name}`}
+                          >
+                            {copiedLink === `${RENDER_LIVE_HOST}/school/${t.subdomain}` ? (
+                              <Check className="h-4 w-4 text-emerald-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
                           </button>
                           <button
                             type="button"
@@ -2067,9 +2120,70 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                         <div className="mt-0.5 p-0.5 bg-emerald-50 text-emerald-600 rounded-full shrink-0">
                           <Check className="h-3 w-3" />
                         </div>
-                        <div>
-                          <p className="text-[11px] font-extrabold text-slate-700">Subdomain Redirection</p>
-                          <p className="text-[10px] text-slate-500">Assigned host: <span className="font-mono text-[9px] bg-slate-200 px-1 py-0.5 rounded">{selectedPreviewTenant.subdomain}.eduos.com</span></p>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-extrabold text-slate-700">Subdomain Redirection & Live Links</p>
+                          <p className="text-[10px] text-slate-500 mb-2">
+                            Assigned host: <span className="font-mono text-[9px] bg-slate-200 px-1 py-0.5 rounded font-bold text-slate-800">{selectedPreviewTenant.subdomain}.eduos.com</span>
+                          </p>
+                          
+                          {/* Live Links Container */}
+                          <div className="bg-white border border-slate-200 rounded-xl p-2.5 space-y-2 shadow-2xs">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[9px] font-mono font-bold text-indigo-700 uppercase tracking-wider">
+                                  Render Live URL
+                                </span>
+                                <span className="text-[9px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.2 rounded font-mono">
+                                  Active & Direct
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="font-mono text-[10px] text-indigo-600 truncate font-semibold">
+                                  {RENDER_LIVE_HOST}/school/{selectedPreviewTenant.subdomain}
+                                </span>
+                                <div className="flex items-center space-x-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyLink(`${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}`)}
+                                    className="px-2 py-0.5 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors cursor-pointer"
+                                  >
+                                    {copiedLink === `${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}` ? "Copied!" : "Copy"}
+                                  </button>
+                                  <a
+                                    href={`${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-2 py-0.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded transition-colors inline-flex items-center gap-0.5"
+                                  >
+                                    <span>Open</span>
+                                    <ExternalLink className="h-2.5 w-2.5" />
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="pt-2 border-t border-slate-100">
+                              <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider block mb-0.5">
+                                Custom Domain Host
+                              </span>
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="font-mono text-[10px] text-slate-600 truncate">
+                                  https://{selectedPreviewTenant.subdomain}.eduos.com
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyLink(`https://${selectedPreviewTenant.subdomain}.eduos.com`)}
+                                  className="px-2 py-0.5 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors cursor-pointer shrink-0"
+                                >
+                                  {copiedLink === `https://${selectedPreviewTenant.subdomain}.eduos.com` ? "Copied!" : "Copy"}
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <div className="pt-1.5 border-t border-slate-100 text-[9px] text-slate-400 font-medium">
+                              Type this link in any browser to access the school portal directly without logging into core parent admin.
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2106,14 +2220,35 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                         <span className="w-2.5 h-2.5 rounded-full bg-amber-400 block" />
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 block" />
                       </div>
-                      <div className={`px-4 py-1 rounded-lg border text-center text-[9px] w-64 truncate mx-2 ${
+                      <div className={`px-4 py-1.5 rounded-lg border text-center text-[9px] max-w-sm truncate mx-2 flex items-center justify-center space-x-2 ${
                         simulatedPortalThemeMode === "light" 
-                          ? "bg-white border-slate-200 text-slate-500" 
-                          : "bg-slate-900 border-slate-800 text-slate-400"
+                          ? "bg-white border-slate-200 text-slate-600" 
+                          : "bg-slate-900 border-slate-800 text-slate-300"
                       }`}>
-                        https://{selectedPreviewTenant.subdomain}.eduos.com/portal
+                        <span className="font-mono font-bold truncate">
+                          {RENDER_LIVE_HOST}/school/{selectedPreviewTenant.subdomain}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLink(`${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}`)}
+                          className="text-[9px] text-indigo-600 font-bold hover:underline cursor-pointer shrink-0"
+                          title="Copy Link"
+                        >
+                          {copiedLink === `${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}` ? "✓" : "Copy"}
+                        </button>
                       </div>
-                      <div className="w-10" />
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <a
+                          href={`${RENDER_LIVE_HOST}/school/${selectedPreviewTenant.subdomain}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2 py-1 text-[9px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors inline-flex items-center gap-1 shadow-3xs"
+                          title="Open live school portal in browser"
+                        >
+                          <span>Open Live</span>
+                          <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      </div>
                     </div>
 
                     {/* School Portal Simulated Live Header */}
@@ -2207,7 +2342,9 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                               type="button"
                               className="px-3.5 py-1.5 text-white font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer select-none hover:brightness-110 active:brightness-95"
                               style={{ backgroundColor: simulatedBrandColor }}
-                              onClick={() => alert(`Simulating CBT launch on: https://${selectedPreviewTenant.subdomain}.eduos.com/cbt/launch`)}
+                              onClick={() => {
+                                setSuccessMsg(`Launched CBT Exam Simulation: https://${selectedPreviewTenant.subdomain}.eduos.com/student-exams?examId=e-1`);
+                              }}
                             >
                               Launch CBT
                             </button>
@@ -2227,7 +2364,9 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                               type="button"
                               className="px-3.5 py-1.5 text-white font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer select-none hover:brightness-110 active:brightness-95"
                               style={{ backgroundColor: simulatedBrandColor }}
-                              onClick={() => alert(`Simulating Quiz launch on: https://${selectedPreviewTenant.subdomain}.eduos.com/quiz/launch`)}
+                              onClick={() => {
+                                setSuccessMsg(`Launched Quiz Simulation: https://${selectedPreviewTenant.subdomain}.eduos.com/student-exams?examId=e-2`);
+                              }}
                             >
                               Launch CBT
                             </button>
@@ -2335,9 +2474,29 @@ export default function TenantManagement({ token, onSelectTenantPage, onImperson
                     <h3 className="text-xl font-bold text-slate-800 tracking-tight leading-none mb-1">
                       {selectedSummaryTenant.name}
                     </h3>
-                    <div className="flex items-center space-x-2 text-xs font-mono font-bold text-slate-400">
-                      <Globe className="h-3 w-3 text-slate-400" />
-                      <span>{selectedSummaryTenant.subdomain}.eduos.com</span>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono font-bold text-slate-400">
+                      <div className="flex items-center space-x-1">
+                        <Globe className="h-3 w-3 text-slate-400" />
+                        <span>{selectedSummaryTenant.subdomain}.eduos.com</span>
+                      </div>
+                      <span>•</span>
+                      <a
+                        href={`${RENDER_LIVE_HOST}/school/${selectedSummaryTenant.subdomain}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 hover:underline flex items-center gap-1"
+                        title="Open live link"
+                      >
+                        <span>/school/{selectedSummaryTenant.subdomain}</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLink(`${RENDER_LIVE_HOST}/school/${selectedSummaryTenant.subdomain}`)}
+                        className="text-[10px] text-slate-500 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                      >
+                        {copiedLink === `${RENDER_LIVE_HOST}/school/${selectedSummaryTenant.subdomain}` ? "✓ Copied" : "Copy Live Link"}
+                      </button>
                     </div>
                   </div>
                 </div>

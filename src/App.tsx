@@ -47,6 +47,7 @@ import Gradebook from "./components/Gradebook";
 import ContinuousAssessment from "./components/ContinuousAssessment";
 import ResultsSummary from "./components/ResultsSummary";
 import { User, UserRole } from "./types";
+import { isUserSuperAdmin, detectSubdomainFromLocation } from "./utils/auth";
 import { motion } from "motion/react";
 import { 
   getActivityLogs, 
@@ -330,17 +331,12 @@ export default function App() {
   const [token, setToken] = useState<string>("");
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [activeSchoolSubdomain, setActiveSchoolSubdomain] = useState<string | null>(() => {
-    const path = window.location.pathname;
-    if (path.startsWith("/school/")) {
-      const parts = path.split("/");
-      return parts[2] || null;
-    }
-    return null;
+    return detectSubdomainFromLocation();
   });
 
   const handleSelectTenantSubdomain = (subdomain: string) => {
-    // Open school landing/dashboard page in a new tab to operate independently!
-    window.open(`/school/${subdomain}`, "_blank");
+    setActiveSchoolSubdomain(subdomain);
+    window.history.pushState({}, "", `/school/${subdomain}`);
   };
 
   const handleBackToMain = () => {
@@ -391,7 +387,7 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    if (user && user.role === "ADMIN" && user.tenantId === "default" && token) {
+    if (user && isUserSuperAdmin(user) && token) {
       fetch("/api/tenants", {
         headers: { "Authorization": `Bearer ${token}` }
       })
@@ -422,16 +418,9 @@ export default function App() {
     let allowed = false;
     if (user.role === "ADMIN") {
       allowed = adminTabs.includes(activeTab);
-      // Extra check: Multi-tenant management "tenants" is only for super-admin or specific superadmin-like emails
+      // Multi-tenant management "tenants" is STRICTLY for platform Super Admin!
       if (activeTab === "tenants") {
-        const isSuperAdminEmail = [
-          "adebayosamuel015@gmail.com",
-          "admin@eduos.com",
-          "sasinnovationgroup@gmail.com"
-        ].includes(user.email?.toLowerCase());
-
-        const hasTenantAccess = user.tenantId === "super-admin" || isSuperAdminEmail;
-        if (!hasTenantAccess) {
+        if (!isUserSuperAdmin(user)) {
           allowed = false;
         }
       }
@@ -1300,18 +1289,16 @@ export default function App() {
 
               {/* Quick portal operations logs panel - Visible ONLY to ADMIN */}
               {user.role === "ADMIN" && (() => {
-                const isSuperAdmin = user && user.role === "ADMIN" && user.tenantId === "default";
+                const isSuperAdmin = isUserSuperAdmin(user);
                 const filteredLogs = activityLogs.filter((log) => {
-                  if (user.tenantId !== "default") {
-                    // Tenant-specific admin: show only their own logs
+                  if (!isSuperAdmin) {
+                    // School Admin: strictly show only their own school logs!
                     return log.tenantId === user.tenantId;
                   } else {
                     // Super Admin:
                     if (selectedLogTenantFilter === "all-tenants") {
-                      // Shows only tenants detail, filtering out default platform logs
-                      return log.tenantId && log.tenantId !== "default";
+                      return true;
                     } else {
-                      // Filter by selected tenant
                       return log.tenantId === selectedLogTenantFilter;
                     }
                   }

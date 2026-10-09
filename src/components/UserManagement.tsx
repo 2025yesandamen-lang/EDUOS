@@ -21,6 +21,7 @@ import {
   Trash2
 } from "lucide-react";
 import { logActivity } from "../utils/auditLogger";
+import { isUserSuperAdmin } from "../utils/auth";
 
 interface UserRecord {
   id: string;
@@ -83,8 +84,8 @@ export default function UserManagement({ token, currentUser }: UserManagementPro
   const [showPassword, setShowPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const isSuperAdmin = currentUser.role === "ADMIN" && currentUser.tenantId === "default";
-  const isSchoolAdmin = currentUser.role === "ADMIN" && currentUser.tenantId !== "default";
+  const isSuperAdmin = isUserSuperAdmin(currentUser);
+  const isSchoolAdmin = currentUser.role === "ADMIN" && !isSuperAdmin;
 
   const fetchUsers = async () => {
     try {

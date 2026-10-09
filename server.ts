@@ -136,6 +136,37 @@ app.get("/health/ready", (_req, res) => {
   });
 });
 
+// JWT Secret Key configuration
+export const JWT_SECRET = process.env.JWT_SECRET || "cbt_pro_x_super_secret_key_2026";
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is required in production");
+}
+
+// JWT Authentication Middleware interface
+export interface DecodedToken {
+  id: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  name: string;
+}
+
+// Centralized Super Admin list
+export const SUPER_ADMIN_EMAILS = [
+  "adebayosamuel015@gmail.com",
+  "admin@eduos.com",
+  "sasinnovationgroup@gmail.com"
+];
+
+export function isUserSuperAdmin(user: any): boolean {
+  if (!user) return false;
+  const role = typeof user.role === "string" ? user.role : "";
+  if (!role.includes("ADMIN")) return false;
+  if (user.tenantId === "super-admin") return true;
+  const email = (user.email || "").toLowerCase().trim();
+  return SUPER_ADMIN_EMAILS.includes(email);
+}
+
 // Global Tenant Context Middleware using AsyncLocalStorage
 app.use((req: any, res: any, next: any) => {
   let tenantId = "default";
@@ -160,14 +191,8 @@ app.use((req: any, res: any, next: any) => {
       tenantId = decoded.tenantId || "default";
       isAuthenticated = true;
       
-      // If the user is a super admin, we can set a bypass context to allow global management
-      const isSuperAdminEmail = [
-        "adebayosamuel015@gmail.com",
-        "admin@eduos.com",
-        "sasinnovationgroup@gmail.com"
-      ].includes(decoded.email?.toLowerCase());
-
-      if (decoded.role === "ADMIN" && (decoded.tenantId === "super-admin" || isSuperAdminEmail)) {
+      // If the user is a true super admin, set bypass context to allow global management
+      if (isUserSuperAdmin(decoded)) {
         tenantId = "super-admin-bypass";
       }
     } catch (e) {
@@ -175,16 +200,62 @@ app.use((req: any, res: any, next: any) => {
     }
   }
 
-  // 2. Fallbacks for unauthenticated endpoints - ONLY allowed if user is NOT authenticated, or is a super admin
+  // 2. Tenant detection for unauthenticated endpoints or super admin bypass
   if (!isAuthenticated || tenantId === "super-admin-bypass") {
-    if (req.query && req.query.tenant_id) {
-      tenantId = req.query.tenant_id as string;
-    } else if (req.headers && req.headers["x-tenant-id"]) {
+    // A. Check explicit query params: ?tenant=slug, ?school=slug, ?subdomain=slug, ?tenant_id=slug
+    if (req.query) {
+      if (req.query.tenant_id) {
+        tenantId = req.query.tenant_id as string;
+      } else if (req.query.tenant) {
+        tenantId = req.query.tenant as string;
+      } else if (req.query.school) {
+        tenantId = req.query.school as string;
+      } else if (req.query.subdomain) {
+        tenantId = req.query.subdomain as string;
+      }
+    }
+
+    // B. Check headers: x-tenant-id
+    if (req.headers && req.headers["x-tenant-id"]) {
       tenantId = req.headers["x-tenant-id"] as string;
-    } else if (req.body && req.body.tenantId) {
-      tenantId = req.body.tenantId as string;
-    } else if (req.body && req.body.tenant_id) {
-      tenantId = req.body.tenant_id as string;
+    }
+
+    // C. Check body: tenantId or tenant_id
+    if (req.body) {
+      if (req.body.tenantId) tenantId = req.body.tenantId as string;
+      else if (req.body.tenant_id) tenantId = req.body.tenant_id as string;
+    }
+
+    // D. Check Host header for Subdomain Redirection (e.g. jide.eduos.com or jide.eduos-zf0v.onrender.com)
+    const rawHost = (req.headers["x-forwarded-host"] || req.headers.host || "") as string;
+    const hostWithoutPort = rawHost.split(":")[0].toLowerCase().trim();
+    if (hostWithoutPort && !/^(\d{1,3}\.){3}\d{1,3}$/.test(hostWithoutPort) && hostWithoutPort !== "localhost") {
+      const parts = hostWithoutPort.split(".");
+      if (hostWithoutPort.endsWith("eduos.com") && parts.length === 3 && parts[0] !== "www") {
+        tenantId = parts[0];
+      } else if (hostWithoutPort.endsWith(".onrender.com") && parts.length === 4 && parts[0] !== "www") {
+        tenantId = parts[0];
+      } else if (hostWithoutPort.endsWith(".localhost") && parts.length === 2) {
+        tenantId = parts[0];
+      }
+    }
+
+    // E. Check URL path for direct school link (e.g. /school/:subdomain, /tenant/:subdomain, /:subdomain)
+    const reqPath = req.path || "";
+    if (reqPath.startsWith("/school/") || reqPath.startsWith("/tenant/") || reqPath.startsWith("/tenants/")) {
+      const pathParts = reqPath.split("/").filter(Boolean);
+      if (pathParts.length >= 2 && pathParts[1] !== "default") {
+        tenantId = pathParts[1];
+      }
+    } else {
+      const pathParts = reqPath.split("/").filter(Boolean);
+      if (pathParts.length === 1) {
+        const candidate = pathParts[0].toLowerCase().trim();
+        const reserved = ["api", "assets", "static", "health", "login", "admin", "dashboard", "super-admin", "cbt", "exams", "students", "teachers", "parents", "favicon.ico", "manifest.json", "index.html"];
+        if (!reserved.includes(candidate) && candidate !== "default") {
+          tenantId = candidate;
+        }
+      }
     }
   } else {
     // If authenticated, strictly enforce the user's tenant ID, ignoring any external parameters to prevent cross-tenant queries
@@ -194,6 +265,8 @@ app.use((req: any, res: any, next: any) => {
     if (req.query) {
       if (req.query.tenant_id) req.query.tenant_id = tenantId;
       if (req.query.tenantId) req.query.tenantId = tenantId;
+      if (req.query.tenant) req.query.tenant = tenantId;
+      if (req.query.school) req.query.school = tenantId;
     }
     if (req.headers) {
       if (req.headers["x-tenant-id"]) req.headers["x-tenant-id"] = tenantId;
@@ -209,21 +282,6 @@ app.use((req: any, res: any, next: any) => {
     next();
   });
 });
-
-// JWT Secret Key configuration
-const JWT_SECRET = process.env.JWT_SECRET || "cbt_pro_x_super_secret_key_2026";
-if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET is required in production");
-}
-
-// JWT Authentication Middleware
-interface DecodedToken {
-  id: string;
-  email: string;
-  role: string;
-  tenantId: string;
-  name: string;
-}
 
 function authenticateToken(req: any, res: any, next: any) {
   let token: string | undefined;
@@ -521,10 +579,14 @@ app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
 app.get("/api/user-management/users", authenticateToken, async (req: any, res) => {
   try {
     const allUsers = await dbGetUsers();
+    const isSuperAdmin = isUserSuperAdmin(req.user);
     
-    // Super Admin: returns everything
-    if (req.user.role === "ADMIN" && req.user.tenantId === "default") {
-      return res.json(allUsers.map(u => ({
+    // Super Admin: returns everything (optionally filtered by tenant_id query)
+    if (isSuperAdmin) {
+      const filtered = req.query.tenant_id 
+        ? allUsers.filter(u => u.tenantId === req.query.tenant_id)
+        : allUsers;
+      return res.json(filtered.map(u => ({
         id: u.id,
         email: u.email,
         name: u.name,
@@ -534,9 +596,9 @@ app.get("/api/user-management/users", authenticateToken, async (req: any, res) =
       })));
     }
     
-    // School Admin: returns only their own tenant's users
+    // School Admin: returns strictly only their own school tenant's users!
     if (req.user.role === "ADMIN") {
-      const tenantUsers = allUsers.filter(u => u.tenantId === req.user.tenantId);
+      const tenantUsers = allUsers.filter(u => u.tenantId === req.user.tenantId && !isUserSuperAdmin(u));
       return res.json(tenantUsers.map(u => ({
         id: u.id,
         email: u.email,
@@ -580,9 +642,14 @@ app.post("/api/user-management/users", authenticateToken, async (req: any, res) 
       return res.status(400).json({ error: true, message: "An account with this email address already exists on the platform." });
     }
 
-    const isSuperAdmin = req.user.role === "ADMIN" && req.user.tenantId === "default";
+    const isSuperAdmin = isUserSuperAdmin(req.user);
+
+    // School Admins cannot create Super Admin accounts
+    if (!isSuperAdmin && (role === "SUPER_ADMIN" || (typeof role === "string" && role.includes("SUPER_ADMIN")))) {
+      return res.status(403).json({ error: true, message: "School administrators cannot create Super Admin accounts." });
+    }
     
-    // For School Admins, lock the tenantId to their own school
+    // For School Admins, strictly lock the tenantId to their own school!
     const assignedTenantId = isSuperAdmin ? (tenantId || "default") : req.user.tenantId;
 
     const allUsers = await dbGetUsers();
@@ -674,7 +741,7 @@ app.put("/api/user-management/users/:userId", authenticateToken, async (req: any
       return res.status(404).json({ error: true, message: "User account not found." });
     }
 
-    const isSuperAdmin = req.user.role === "ADMIN" && req.user.tenantId === "default";
+    const isSuperAdmin = isUserSuperAdmin(req.user);
     const isTenantAdmin = req.user.role === "ADMIN" && req.user.tenantId === targetUser.tenantId;
     const isSelf = req.user.id === userId;
 
@@ -683,14 +750,19 @@ app.put("/api/user-management/users/:userId", authenticateToken, async (req: any
     }
 
     // Do not allow local tenant admins to modify Super Admin accounts
-    if (isTenantAdmin && !isSuperAdmin && targetUser.tenantId === "default") {
-      return res.status(403).json({ error: true, message: "Access Denied: Local tenant administrators cannot modify Super Admin profiles." });
+    if (isTenantAdmin && !isSuperAdmin && isUserSuperAdmin(targetUser)) {
+      return res.status(403).json({ error: true, message: "Access Denied: School administrators cannot modify Super Admin profiles." });
     }
 
     // Role privilege escalation guard: only Admins can update a user's role
     let finalRole = undefined;
     if (role !== undefined) {
-      if (isSuperAdmin || isTenantAdmin) {
+      if (isSuperAdmin) {
+        finalRole = role;
+      } else if (isTenantAdmin) {
+        if (role === "SUPER_ADMIN" || (typeof role === "string" && role.includes("SUPER_ADMIN"))) {
+          return res.status(403).json({ error: true, message: "Access Denied: Cannot grant Super Admin privileges." });
+        }
         finalRole = role;
       } else if (role !== targetUser.role) {
         return res.status(403).json({ error: true, message: "Access Denied: Standard users cannot modify account system roles." });
@@ -723,7 +795,7 @@ app.delete("/api/user-management/users/:userId", authenticateToken, async (req: 
       return res.status(404).json({ error: true, message: "User account not found." });
     }
 
-    const isSuperAdmin = req.user.role === "ADMIN" && req.user.tenantId === "default";
+    const isSuperAdmin = isUserSuperAdmin(req.user);
     const isTenantAdmin = req.user.role === "ADMIN" && req.user.tenantId === targetUser.tenantId;
 
     if (!isSuperAdmin && !isTenantAdmin) {
@@ -731,8 +803,8 @@ app.delete("/api/user-management/users/:userId", authenticateToken, async (req: 
     }
 
     // Protect Super Admin accounts from local tenant admin actions
-    if (isTenantAdmin && !isSuperAdmin && targetUser.tenantId === "default") {
-      return res.status(403).json({ error: true, message: "Access Denied: Local tenant administrators cannot delete Super Admin accounts." });
+    if (!isSuperAdmin && isUserSuperAdmin(targetUser)) {
+      return res.status(403).json({ error: true, message: "Access Denied: School administrators cannot delete Super Admin accounts." });
     }
 
     await dbDeleteUser(userId);
@@ -749,7 +821,7 @@ app.post("/api/user-management/users/bulk-delete", authenticateToken, async (req
     return res.status(400).json({ error: true, message: "No users specified for deletion." });
   }
 
-  const isSuperAdmin = req.user.role === "ADMIN" && req.user.tenantId === "default";
+  const isSuperAdmin = isUserSuperAdmin(req.user);
   const isTenantAdmin = req.user.role === "ADMIN";
 
   if (!isSuperAdmin && !isTenantAdmin) {
@@ -762,7 +834,7 @@ app.post("/api/user-management/users/bulk-delete", authenticateToken, async (req
       const targetUser = await dbFindUserById(userId);
       if (targetUser) {
         // Enforce boundaries
-        if (isSuperAdmin || (isTenantAdmin && req.user.tenantId === targetUser.tenantId && targetUser.tenantId !== "default")) {
+        if (isSuperAdmin || (isTenantAdmin && req.user.tenantId === targetUser.tenantId && !isUserSuperAdmin(targetUser))) {
           await dbDeleteUser(userId);
           deletedCount++;
         }
@@ -781,7 +853,7 @@ app.post("/api/user-management/users/bulk-edit", authenticateToken, async (req: 
     return res.status(400).json({ error: true, message: "No users specified for editing." });
   }
 
-  const isSuperAdmin = req.user.role === "ADMIN" && req.user.tenantId === "default";
+  const isSuperAdmin = isUserSuperAdmin(req.user);
   const isTenantAdmin = req.user.role === "ADMIN";
 
   if (!isSuperAdmin && !isTenantAdmin) {
@@ -794,7 +866,7 @@ app.post("/api/user-management/users/bulk-edit", authenticateToken, async (req: 
       const targetUser = await dbFindUserById(userId);
       if (targetUser) {
         // Enforce authorization boundaries
-        if (isSuperAdmin || (isTenantAdmin && req.user.tenantId === targetUser.tenantId && targetUser.tenantId !== "default")) {
+        if (isSuperAdmin || (isTenantAdmin && req.user.tenantId === targetUser.tenantId && !isUserSuperAdmin(targetUser))) {
           // If setting tenantId, only allow Super Admin to move users between tenants
           const targetTenant = isSuperAdmin ? tenantId : undefined;
           await dbUpdateUser(userId, targetUser.name, undefined, role !== undefined ? role : undefined, targetTenant);
@@ -811,11 +883,12 @@ app.post("/api/user-management/users/bulk-edit", authenticateToken, async (req: 
 // 1.5. MULTI-TENANT CONSOLE ROUTES
 app.get("/api/tenants", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: true, message: "Super Admin privileges required" });
+    return res.status(403).json({ error: true, message: "Administrator privileges required" });
   }
+  const isSuperAdmin = isUserSuperAdmin(req.user);
   const list = await dbGetTenants();
-  if (req.user.tenantId !== "default") {
-    // Non-super-admins (tenant admins) can only see their own school tenant
+  if (!isSuperAdmin) {
+    // School Admin: strictly limited to seeing only their own school tenant!
     const restrictedList = list.filter(t => t.id === req.user.tenantId);
     return res.json(restrictedList);
   }
@@ -824,9 +897,10 @@ app.get("/api/tenants", authenticateToken, async (req: any, res) => {
 
 app.get("/api/tenants/:id", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: true, message: "Super Admin privileges required" });
+    return res.status(403).json({ error: true, message: "Administrator privileges required" });
   }
-  if (req.user.tenantId !== "default" && req.params.id !== req.user.tenantId) {
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  if (!isSuperAdmin && req.params.id !== req.user.tenantId) {
     return res.status(403).json({ error: true, message: "Forbidden: Accidental cross-tenant data access blocked" });
   }
   const tenant = await dbGetTenantById(req.params.id);
@@ -839,9 +913,11 @@ app.get("/api/tenants/:id", authenticateToken, async (req: any, res) => {
 app.get("/api/teachers", authenticateToken, async (req: any, res) => {
   try {
     const allUsers = await dbGetUsers();
-    const targetTenantId = req.query.tenant_id || req.user.tenantId || "default";
+    const isSuperAdmin = isUserSuperAdmin(req.user);
+    // School Admin is strictly locked to their own school tenant
+    const targetTenantId = isSuperAdmin ? (req.query.tenant_id as string || req.user.tenantId || "default") : req.user.tenantId;
     const teachers = allUsers
-      .filter((u: any) => u.role === "TEACHER" && (u.tenantId === targetTenantId || targetTenantId === "default"))
+      .filter((u: any) => u.role === "TEACHER" && (isSuperAdmin && !req.query.tenant_id ? true : u.tenantId === targetTenantId))
       .map((u: any) => {
         const { password, ...safeTeacher } = u;
         return safeTeacher;
@@ -854,9 +930,10 @@ app.get("/api/teachers", authenticateToken, async (req: any, res) => {
 
 app.get("/api/tenants/:id/admins", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: true, message: "Super Admin privileges required" });
+    return res.status(403).json({ error: true, message: "Administrator privileges required" });
   }
-  if (req.user.tenantId !== "default" && req.params.id !== req.user.tenantId) {
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  if (!isSuperAdmin && req.params.id !== req.user.tenantId) {
     return res.status(403).json({ error: true, message: "Forbidden: Accidental cross-tenant admin query blocked" });
   }
   const tenantId = req.params.id;
@@ -872,8 +949,8 @@ app.get("/api/tenants/:id/admins", authenticateToken, async (req: any, res) => {
 });
 
 app.post("/api/tenants/:id/impersonate", authenticateToken, async (req: any, res) => {
-  // Only Super Admins (ADMIN in 'default' tenant) can impersonate other tenants
-  if (req.user.role !== "ADMIN" || req.user.tenantId !== "default") {
+  // Only Super Admins can impersonate other tenants
+  if (!isUserSuperAdmin(req.user)) {
     return res.status(403).json({ error: true, message: "Super Admin privileges required to impersonate." });
   }
 
@@ -936,7 +1013,8 @@ app.post("/api/tenants/:id/impersonate", authenticateToken, async (req: any, res
 });
 
 app.post("/api/tenants", authenticateToken, async (req: any, res) => {
-  if (req.user.role !== "ADMIN" || req.user.tenantId !== "default") {
+  // Strictly Super Admin only
+  if (!isUserSuperAdmin(req.user)) {
     return res.status(403).json({ error: true, message: "Super Admin privileges required to provision new school instances" });
   }
   const { 
@@ -1017,9 +1095,10 @@ app.post("/api/tenants", authenticateToken, async (req: any, res) => {
 
 app.put("/api/tenants/:id", authenticateToken, async (req: any, res) => {
   if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: true, message: "Super Admin privileges required" });
+    return res.status(403).json({ error: true, message: "Administrator privileges required" });
   }
-  if (req.user.tenantId !== "default" && req.params.id !== req.user.tenantId) {
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  if (!isSuperAdmin && req.params.id !== req.user.tenantId) {
     return res.status(403).json({ error: true, message: "Forbidden: Accidental cross-tenant modification blocked" });
   }
   const tenant = await dbGetTenantById(req.params.id);
@@ -1030,7 +1109,7 @@ app.put("/api/tenants/:id", authenticateToken, async (req: any, res) => {
   const { name, subdomain, logoUrl, backgroundImageUrl, primaryColor, secondaryColor, contactEmail, contactPhone, address, status, plan, academicYear } = req.body;
 
   let normalizedSubdomain = tenant.subdomain;
-  if (subdomain) {
+  if (subdomain && isSuperAdmin) {
     normalizedSubdomain = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (normalizedSubdomain !== tenant.subdomain) {
       const existing = await dbGetTenantBySubdomain(normalizedSubdomain);
@@ -1042,7 +1121,7 @@ app.put("/api/tenants/:id", authenticateToken, async (req: any, res) => {
 
   const updates = {
     ...(name && { name }),
-    ...(subdomain && { subdomain: normalizedSubdomain }),
+    ...(isSuperAdmin && subdomain && { subdomain: normalizedSubdomain }),
     ...(logoUrl !== undefined && { logoUrl }),
     ...(backgroundImageUrl !== undefined && { backgroundImageUrl }),
     ...(primaryColor && { primaryColor }),
@@ -1050,8 +1129,8 @@ app.put("/api/tenants/:id", authenticateToken, async (req: any, res) => {
     ...(contactEmail !== undefined && { contactEmail }),
     ...(contactPhone !== undefined && { contactPhone }),
     ...(address !== undefined && { address }),
-    ...(status && { status }),
-    ...(plan && { plan }),
+    ...(isSuperAdmin && status && { status }),
+    ...(isSuperAdmin && plan && { plan }),
     ...(academicYear && { academicYear })
   };
 
@@ -1061,8 +1140,9 @@ app.put("/api/tenants/:id", authenticateToken, async (req: any, res) => {
 
 // BULK TENANT OPERATIONS
 app.post("/api/tenants/bulk", authenticateToken, async (req: any, res) => {
-  if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: true, message: "Super Admin privileges required" });
+  // Strictly Super Admin only
+  if (!isUserSuperAdmin(req.user)) {
+    return res.status(403).json({ error: true, message: "Super Admin privileges required for bulk tenant operations" });
   }
   const { ids, action } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -1133,7 +1213,8 @@ app.post("/api/tenants/bulk", authenticateToken, async (req: any, res) => {
 });
 
 app.delete("/api/tenants/:id", authenticateToken, async (req: any, res) => {
-  if (req.user.role !== "ADMIN" || req.user.tenantId !== "default") {
+  // Strictly Super Admin only
+  if (!isUserSuperAdmin(req.user)) {
     return res.status(403).json({ error: true, message: "Super Admin privileges required to delete school instances" });
   }
   const tenant = await dbGetTenantById(req.params.id);
@@ -1152,6 +1233,9 @@ app.delete("/api/tenants/:id", authenticateToken, async (req: any, res) => {
 app.get("/api/public/tenants/:subdomain", async (req, res) => {
   const subdomain = req.params.subdomain;
   let tenant = await dbGetTenantBySubdomain(subdomain);
+  if (!tenant) {
+    tenant = await dbGetTenantById(subdomain);
+  }
   if (!tenant) {
     // Dynamic on-the-fly school creation so that any school works instantly!
     const capitalizedName = subdomain.charAt(0).toUpperCase() + subdomain.slice(1);
@@ -1296,7 +1380,8 @@ app.get("/api/exams", authenticateToken, async (req: any, res) => {
   }
 
   // Prevent cross-tenant data access by filtering by tenant_id
-  const targetTenantId = req.query.tenant_id || req.user.tenantId || "default";
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  const targetTenantId = isSuperAdmin ? (req.query.tenant_id as string || req.user.tenantId || "default") : (req.user.tenantId || "default");
   filtered = filtered.filter(exam => {
     const exTenant = (exam as any).tenantId || "default";
     return exTenant === targetTenantId;
@@ -1983,13 +2068,7 @@ app.get("/api/results/all", authenticateToken, async (req: any, res) => {
     const allUsers = await dbGetUsers();
 
     // Prevent cross-tenant data access by strictly validating tenant parameters
-    const isSuperAdminEmail = [
-      "adebayosamuel015@gmail.com",
-      "admin@eduos.com",
-      "sasinnovationgroup@gmail.com"
-    ].includes(req.user.email?.toLowerCase());
-
-    const isSuperAdmin = req.user.role === "ADMIN" && (req.user.tenantId === "super-admin" || req.user.tenantId === "default" || isSuperAdminEmail);
+    const isSuperAdmin = isUserSuperAdmin(req.user);
 
     let targetTenantId = req.user.tenantId || "default";
     if (isSuperAdmin) {
@@ -2076,7 +2155,8 @@ app.get("/api/students", authenticateToken, async (req: any, res) => {
   }
 
   // Prevent cross-tenant data access by filtering by tenant_id
-  const targetTenantId = req.query.tenant_id || req.user.tenantId || "default";
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  const targetTenantId = isSuperAdmin ? (req.query.tenant_id || req.user.tenantId || "default") : (req.user.tenantId || "default");
   const allUsers = await dbGetUsers();
   list = list.filter(student => {
     if (student.userId) {
@@ -2110,6 +2190,15 @@ app.get("/api/students/:id", authenticateToken, async (req: any, res) => {
 
   const student = await dbGetStudentById(studentId);
   if (!student) return res.status(404).json({ error: true, message: "Student not found" });
+
+  // School Admin isolation check: cannot view student from another school
+  const isSuperAdmin = isUserSuperAdmin(req.user);
+  if (!isSuperAdmin) {
+    const studentTenant = student.tenantId || "default";
+    if (studentTenant !== req.user.tenantId) {
+      return res.status(403).json({ error: true, message: "Forbidden: You can only view students enrolled in your own school" });
+    }
+  }
   
   const cls = (await dbGetClasses()).find(c => c.id === student.classId);
   const attHistory = await dbGetAttendanceForStudent(student.id);
@@ -2163,6 +2252,12 @@ app.get("/api/reports/student/:id", authenticateToken, async (req: any, res) => 
   try {
     const student = await dbGetStudentById(studentId);
     if (!student) return res.status(404).json({ error: true, message: "Student not found" });
+
+    // Isolation check: School admin can only view reports for students of their school
+    const isSuperAdmin = isUserSuperAdmin(req.user);
+    if (!isSuperAdmin && (student.tenantId || "default") !== req.user.tenantId) {
+      return res.status(403).json({ error: true, message: "Forbidden: You can only view reports for students enrolled in your own school" });
+    }
     const [classes, subjects, terms, grades, tenants, attendanceHistory] = await Promise.all([
       dbGetClasses(), dbGetSubjects(), dbGetAcademicTerms(), dbGetGrades(), dbGetTenants(), dbGetAttendanceForStudent(studentId)
     ]);
@@ -3002,6 +3097,99 @@ app.post("/api/ai/advisor-chat", async (req, res) => {
   } catch (err: any) {
     console.error("AI Advisor error:", err);
     res.status(500).json({ error: true, message: `Advisor chat failed: ${err.message || err}` });
+  }
+});
+
+// Multi-Role Gemini AI Chatbot endpoint
+app.post("/api/ai/chat", async (req, res) => {
+  const { message, history, role, model } = req.body || {};
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({ error: true, message: "A message string is required." });
+  }
+
+  const selectedRole = role || "advisor";
+  const selectedModel = model || "gemini-3.8-flash";
+
+  let systemInstruction = "You are a helpful AI assistant for EduOS.";
+  if (selectedRole === "advisor") {
+    systemInstruction = `You are a warm, highly knowledgeable Academic Guidance Counselor and Study Advisor in EduOS.
+You advise secondary and high-school students, teachers, and parents on effective study schedules, exam readiness (e.g., WAEC, NECO, JAMB, Cambridge IGCSE), study techniques (active recall, spaced repetition), and cognitive stamina.
+Provide concise, actionable, and encouraging recommendations.`;
+  } else if (selectedRole === "cbt-specialist") {
+    systemInstruction = `You are a high-speed CBT & Exam Testing Specialist in EduOS.
+You specialize in computer-based test strategies, rapid elimination techniques for MCQs, time-management (e.g. 60 questions in 45 minutes), quick formula recall, and mock drills.
+Give crisp, direct, step-by-step answers with zero fluff.`;
+  } else if (selectedRole === "curriculum-analyst") {
+    systemInstruction = `You are an expert Pedagogical & Curriculum Analyst in EduOS.
+You assist educators with Bloom's Taxonomy alignment, syllabus depth, formative vs summative continuous assessment weightings, rubric structuring, and diagnostic remedial plans.
+Adopt a rigorous, pedagogical, and clear framework.`;
+  } else if (selectedRole === "school-admin") {
+    systemInstruction = `You are a School Operations & Educational ERP Consultant in EduOS.
+You assist school administrators and principals with timetable clash resolution, classroom allocation, attendance policy enforcement, tuition billing communications, and staff governance.
+Provide professional, polite, and practical operational advice.`;
+  }
+
+  if (!ai) {
+    // Intelligent simulation fallback when GEMINI_API_KEY is not set
+    const fallbackResponses: Record<string, string[]> = {
+      advisor: [
+        "To excel in your examinations, establish a 4-week active recall cycle. Break each subject into 45-minute focus intervals followed by 10-minute breaks. Prioritize past exam questions from recent years.",
+        "When handling exam pressure, focus on consistent daily question drills rather than overnight cramming. Ensure adequate hydration, structured sleep, and formula summary flashcards.",
+        "For balanced academic progress, review your continuous assessment scorecards weekly to address topics scoring below 60% before final examinations."
+      ],
+      "cbt-specialist": [
+        "CBT Strategy: 1) First Pass: Answer all questions you are 100% sure of in 20 seconds each. 2) Second Pass: Attack calculation questions. 3) Third Pass: Use elimination tactics on remaining flagged items.",
+        "Quick Drill Tip: Always read the question stem carefully before looking at options. Predict the answer before scanning choices A-D to avoid being misled by common distractors.",
+        "Speed Tactic: If a question takes more than 60 seconds without a clear path, flag it and move on immediately. Every MCQ carries equal weight—protect your time budget."
+      ],
+      "curriculum-analyst": [
+        "Curriculum Framework: Balance formative continuous assessments (40%) across weekly quizzes, class participation, and practical projects, alongside summative term exams (60%).",
+        "Cognitive Mapping: Ensure questions span Bloom's Taxonomy levels—40% Remembering/Understanding, 40% Applying/Analyzing, and 20% Evaluating/Creating for holistic mastery.",
+        "Remedial Pathway: For pupils scoring below 50% in diagnostic quizzes, implement targeted 15-minute micro-concept reviews followed by immediate 3-question mastery checks."
+      ],
+      "school-admin": [
+        "Operational Standard: Monitor chronic absenteeism thresholds (>10% absence). Set automated SMS/email reminders to guardians after two consecutive unexcused absences.",
+        "Timetable Optimization: Schedule heavy analytical subjects (Mathematics, Physics, Chemistry) in morning slots (8:30 AM - 11:00 AM) when cognitive concentration is highest.",
+        "School Policy: Ensure all term report cards include verified attendance rates alongside academic percentages to foster parental engagement."
+      ]
+    };
+    const list = fallbackResponses[selectedRole] || fallbackResponses.advisor;
+    const reply = list[Math.floor(Math.random() * list.length)];
+    return res.json({
+      reply,
+      modelUsed: selectedModel,
+      role: selectedRole,
+      fallbackNotice: "Offline / Simulated AI advisory mode active (add GEMINI_API_KEY to activate live generative models)."
+    });
+  }
+
+  try {
+    const formattedHistory = Array.isArray(history)
+      ? history.map((item: any) => ({
+          role: item.role === "user" ? ("user" as const) : ("model" as const),
+          parts: [{ text: String(item.text || item.message || "") }]
+        }))
+      : [];
+
+    const contents = [
+      ...formattedHistory,
+      { role: "user" as const, parts: [{ text: message }] }
+    ];
+
+    const { text, modelUsed } = await callGeminiResilient({
+      model: selectedModel,
+      contents,
+      config: { systemInstruction }
+    });
+
+    res.json({
+      reply: text,
+      modelUsed,
+      role: selectedRole
+    });
+  } catch (err: any) {
+    console.error("Gemini Chat API error:", err);
+    res.status(500).json({ error: true, message: `Chat request failed: ${err.message || err}` });
   }
 });
 
@@ -4799,9 +4987,22 @@ app.get("/api/gmail/messages", authenticateToken, (req: any, res) => {
 // DEV SERVER MIDDLEWARE / SPA STATIC HANDLER
 // ----------------------------------------------------
 
-// API 404 Fallback - ensures unmatched /api routes return JSON, not HTML index.html
-app.all("/api/{*splat}", (req, res) => {
-  res.status(404).json({ error: true, message: `API endpoint not found: ${req.method} ${req.path}` });
+// API 404 Fallback - ensures ALL unmatched /api routes (and any API requests) return JSON, NEVER HTML
+app.use((req, res, next) => {
+  const urlPath = req.originalUrl || req.path || req.url || "";
+  if (
+    urlPath.startsWith("/api") ||
+    req.path.startsWith("/api") ||
+    req.headers.accept?.includes("application/json") ||
+    req.headers["content-type"]?.includes("application/json")
+  ) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.status(404).json({
+      error: true,
+      message: `API endpoint not found: ${req.method} ${urlPath}`
+    });
+  }
+  next();
 });
 
 // Global API error handler - ensures all server errors return JSON, not HTML

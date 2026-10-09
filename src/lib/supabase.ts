@@ -16,6 +16,14 @@ const getEnvValue = (key: string): string => {
     if (globalEnv) return String(globalEnv);
   }
 
+  try {
+    if (typeof import.meta !== "undefined" && (import.meta as any).env?.[key]) {
+      return String((import.meta as any).env[key]);
+    }
+  } catch {
+    // Ignore in non-bundler contexts
+  }
+
   if (typeof process !== "undefined" && process.env?.[key]) {
     return String(process.env[key]);
   }
@@ -34,7 +42,7 @@ const supabaseAnonKey =
   getEnvValue("VITE_SUPABASE_ANON_KEY") ||
   getEnvValue("SUPABASE_PUBLISHABLE_KEY") ||
   getEnvValue("SUPABASE_ANON_KEY") ||
-  "";
+  "sb_publishable_0peHIUrniDPHZMfkLxnsWQ_OSjfuKLZ";
 
 function createSafeSupabaseClient() {
   if (supabaseUrl && supabaseAnonKey) {

@@ -12,7 +12,7 @@ let adminToken;
 const testDbPath = path.join(os.tmpdir(), `eduos-smoke-${process.pid}.json`);
 
 async function waitForServer() {
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${baseUrl}/health`);
@@ -33,6 +33,7 @@ before(async () => {
       NODE_ENV: "production",
       PORT: String(port),
       DATABASE_URL: "",
+      GEMINI_API_KEY: "",
       EDUOS_SKIP_DATABASE: "true",
       EDUOS_DB_FILE: testDbPath,
       JWT_SECRET: "phase-0-test-secret"

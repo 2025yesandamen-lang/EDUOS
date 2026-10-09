@@ -12,7 +12,8 @@ const supabaseUrl =
 const supabaseKey =
   (typeof process !== "undefined" && (process.env?.SUPABASE_PUBLISHABLE_KEY || process.env?.SUPABASE_ANON_KEY || process.env?.VITE_SUPABASE_PUBLISHABLE_KEY || process.env?.VITE_SUPABASE_ANON_KEY)) ||
   (typeof window !== "undefined" && ((window as any).env?.SUPABASE_PUBLISHABLE_KEY || (window as any).env?.SUPABASE_ANON_KEY || (window as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || (window as any).env?.VITE_SUPABASE_ANON_KEY)) ||
-  "";
+  (typeof import.meta !== "undefined" && ((import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || (import.meta as any).env?.SUPABASE_PUBLISHABLE_KEY)) ||
+  "sb_publishable_0peHIUrniDPHZMfkLxnsWQ_OSjfuKLZ";
 
 export const createClient = () => {
   if (!supabaseKey) {

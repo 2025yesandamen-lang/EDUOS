@@ -18,48 +18,72 @@ export function getTenantId(): string {
   return store || "default";
 }
 
-function normalizeDatabaseUrl(rawUrl?: string): string {
-  if (!rawUrl) return "";
-
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.password && parsed.password !== encodeURIComponent(parsed.password)) {
-      parsed.password = encodeURIComponent(parsed.password);
-      return parsed.toString();
-    }
-    return rawUrl;
-  } catch {
-    const match = rawUrl.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@(.+)$/i);
-    if (!match) return rawUrl;
-
-    const [, username, password, rest] = match;
-    return `postgresql://${username}:${encodeURIComponent(password)}@${rest}`;
-  }
+export interface PgConfig {
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database: string;
+  ssl: any;
 }
 
-function getDatabaseHost(rawUrl: string): string | null {
+export function parseDatabaseConfig(rawUrl?: string): PgConfig | null {
+  if (!rawUrl) return null;
+
   try {
-    const parsed = new URL(rawUrl);
-    return parsed.hostname || null;
-  } catch {
+    const match = rawUrl.match(/^postgres(?:ql)?:\/\/(.+)$/i);
+    if (!match) return null;
+
+    const rest = match[1];
+    const lastAtIndex = rest.lastIndexOf("@");
+    let user = "postgres";
+    let password = "";
+    let hostAndPath = rest;
+
+    if (lastAtIndex !== -1) {
+      const creds = rest.slice(0, lastAtIndex);
+      hostAndPath = rest.slice(lastAtIndex + 1);
+
+      const firstColon = creds.indexOf(":");
+      if (firstColon === -1) {
+        user = decodeURIComponent(creds);
+      } else {
+        user = decodeURIComponent(creds.slice(0, firstColon));
+        const rawPass = creds.slice(firstColon + 1);
+        try {
+          password = decodeURIComponent(rawPass);
+        } catch {
+          password = rawPass;
+        }
+      }
+    }
+
+    const dummyUrl = new URL("http://" + hostAndPath);
+    const host = dummyUrl.hostname;
+    const port = Number(dummyUrl.port) || 5432;
+    const database = dummyUrl.pathname.replace(/^\//, "") || "postgres";
+
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    const ssl = isLocal ? false : { rejectUnauthorized: false };
+
+    return { host, port, user, password, database, ssl };
+  } catch (err) {
+    console.error("[CBT PRO X DB] Error parsing DATABASE_URL:", err);
     return null;
   }
 }
 
-async function canReachDatabase(rawUrl: string): Promise<boolean> {
-  const hostname = getDatabaseHost(rawUrl);
-  if (!hostname) return false;
-
-  if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+export async function canReachPort(host: string, port: number, timeoutMs = 2500): Promise<boolean> {
+  if (!host) return false;
+  if (host === "localhost" || host === "127.0.0.1") return true;
 
   return await new Promise<boolean>((resolve) => {
-    const port = Number(new URL(rawUrl).port || 5432);
-    const socket = net.createConnection({ host: hostname, port }, () => {
+    const socket = net.createConnection({ host, port }, () => {
       socket.destroy();
       resolve(true);
     });
 
-    socket.setTimeout(2500, () => {
+    socket.setTimeout(timeoutMs, () => {
       socket.destroy();
       resolve(false);
     });
@@ -68,10 +92,67 @@ async function canReachDatabase(rawUrl: string): Promise<boolean> {
   });
 }
 
-// Database URL from environment variables
-const DATABASE_URL = process.env.EDUOS_SKIP_DATABASE === "true"
-  ? ""
-  : normalizeDatabaseUrl(process.env.DATABASE_URL);
+export async function resolveWorkingDatabaseConfig(rawUrl?: string): Promise<PgConfig | null> {
+  if (!rawUrl || process.env.EDUOS_SKIP_DATABASE === "true") return null;
+
+  const config = parseDatabaseConfig(rawUrl);
+  if (!config) return null;
+
+  if (config.host === "localhost" || config.host === "127.0.0.1") {
+    return config;
+  }
+
+  // Probe direct host reachability
+  const isDirectReachable = await canReachPort(config.host, config.port, 2000);
+  if (isDirectReachable) {
+    return config;
+  }
+
+  // If direct host is unreachable (common with Supabase IPv6 deprecation of direct connections):
+  // Gracefully fallback to Supabase connection pooler candidates
+  const sbMatch = config.host.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+  if (sbMatch) {
+    const projectRef = sbMatch[1];
+    console.warn(
+      `[CBT PRO X DB] Direct Supabase host "${config.host}" unreachable. Attempting Supabase connection pooler fallback for project "${projectRef}"...`
+    );
+
+    const poolerCandidates = [
+      "aws-0-eu-west-1.pooler.supabase.com",
+      "aws-0-eu-central-1.pooler.supabase.com",
+      "aws-0-us-east-1.pooler.supabase.com",
+      "aws-0-us-west-1.pooler.supabase.com",
+      "aws-0-ap-southeast-1.pooler.supabase.com"
+    ];
+
+    for (const poolerHost of poolerCandidates) {
+      const reachable = await canReachPort(poolerHost, 5432, 1500);
+      if (reachable) {
+        const poolerUser = config.user.includes(".") ? config.user : `${config.user}.${projectRef}`;
+        const candidateConfig: PgConfig = {
+          ...config,
+          host: poolerHost,
+          port: 5432,
+          user: poolerUser
+        };
+
+        const testPool = new pg.Pool(candidateConfig);
+        try {
+          await testPool.query("SELECT 1");
+          await testPool.end();
+          console.log(
+            `[CBT PRO X DB] Connected successfully to Supabase pooler "${poolerHost}" with user "${poolerUser}".`
+          );
+          return candidateConfig;
+        } catch (poolErr: any) {
+          await testPool.end().catch(() => {});
+        }
+      }
+    }
+  }
+
+  return config;
+}
 
 export let isPostgreSQL = false;
 let databaseState: "initializing" | "postgresql" | "local-fallback" = "initializing";
@@ -80,7 +161,7 @@ let db: any = null;
 
 export function getDatabaseHealth() {
   return {
-    configured: Boolean(DATABASE_URL),
+    configured: Boolean(process.env.DATABASE_URL && process.env.EDUOS_SKIP_DATABASE !== "true"),
     state: databaseState,
     ready: databaseState !== "initializing",
     error: databaseError
@@ -88,32 +169,34 @@ export function getDatabaseHealth() {
 }
 
 async function initializeDatabase() {
-  if (!DATABASE_URL) {
+  const rawUrl = process.env.DATABASE_URL;
+  if (!rawUrl || process.env.EDUOS_SKIP_DATABASE === "true") {
     databaseState = "local-fallback";
     console.log("[CBT PRO X DB] No DATABASE_URL found. Running in Local Fallback mode using 'db.json' for durable preview persistence.");
     return;
   }
 
-  const host = getDatabaseHost(DATABASE_URL);
-  if (host && host !== "localhost" && host !== "127.0.0.1") {
-    const reachable = await canReachDatabase(DATABASE_URL);
-    if (!reachable) {
-      databaseState = "local-fallback";
-      databaseError = `Database host "${host}" is unreachable`;
-      console.warn(
-        `[CBT PRO X DB] Online PostgreSQL host "${host}" is unreachable from this environment. Keeping Local Fallback mode active for preview usage.`
-      );
-      return;
-    }
+  const poolConfig = await resolveWorkingDatabaseConfig(rawUrl);
+  if (!poolConfig) {
+    databaseState = "local-fallback";
+    databaseError = "Invalid DATABASE_URL configuration";
+    return;
+  }
+
+  const reachable = await canReachPort(poolConfig.host, poolConfig.port, 2500);
+  if (!reachable) {
+    databaseState = "local-fallback";
+    databaseError = `Database host "${poolConfig.host}" is unreachable`;
+    console.warn(
+      `[CBT PRO X DB] PostgreSQL host "${poolConfig.host}" is unreachable from this environment. Keeping Local Fallback mode active for preview usage.`
+    );
+    return;
   }
 
   try {
-    const pool = new pg.Pool({
-      connectionString: DATABASE_URL,
-      ssl: DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1") ? false : { rejectUnauthorized: false }
-    });
+    const pool = new pg.Pool(poolConfig);
     db = drizzle(pool, { schema });
-    console.log("[CBT PRO X DB] Attempting to connect and verify PostgreSQL Database...");
+    console.log(`[CBT PRO X DB] Attempting to connect and verify PostgreSQL Database at ${poolConfig.host}:${poolConfig.port}...`);
 
     // Asynchronously verify table existence, then setup/seed tables
     pool.query("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users')")
@@ -284,13 +367,15 @@ async function initializeDatabase() {
 
         // 2. Insert or update the Super Admin user
         try {
-          const now = new Date().toISOString();
-          await pool.query(`
-            INSERT INTO users (id, email, name, password, role, created_at)
-            VALUES ('u-5', 'adebayosamuel015@gmail.com', 'Super Admin', 'Hibilero@2104', 'ADMIN', $1)
-            ON CONFLICT (email) DO UPDATE SET password = EXCLUDED.password, role = EXCLUDED.role
-          `, [now]);
-          console.log("[CBT PRO X DB] Super Admin credentials guaranteed in database.");
+          const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD?.trim();
+          if (superAdminPassword) {
+            const now = new Date().toISOString();
+            await pool.query(`
+              INSERT INTO users (id, email, name, password, role, created_at)
+              VALUES ('u-5', 'adebayosamuel015@gmail.com', 'Super Admin', $1, 'ADMIN', $2)
+              ON CONFLICT (email) DO NOTHING
+            `, [superAdminPassword, now]);
+          }
         } catch (adminErr: any) {
           console.error("[CBT PRO X DB] Error upserting Super Admin user:", adminErr.message);
         }
@@ -489,7 +574,7 @@ const INITIAL_SEED_DATA: LocalDbSchema = {
     { id: "u-2-adebayo", email: "adebayo@eduos.com", name: "Mrs. Florence Adebayo", password: "teacher123", role: "TEACHER", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-3", email: "student@eduos.com", name: "Tunde Folayan", password: "student123", role: "STUDENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
     { id: "u-4", email: "parent@eduos.com", name: "Chief Folayan", password: "parent123", role: "PARENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
-    { id: "u-5", email: "adebayosamuel015@gmail.com", name: "Super Admin", password: "Hibilero@2104", role: "ADMIN", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
+    ...(process.env.SUPER_ADMIN_PASSWORD?.trim() ? [{ id: "u-5", email: "adebayosamuel015@gmail.com", name: "Super Admin", password: process.env.SUPER_ADMIN_PASSWORD.trim(), role: "ADMIN", tenantId: "default", isActive: true, createdAt: new Date().toISOString() }] : []),
     { id: "u-s-4-bat0d", email: "sade@email.com", name: "Sade Ademola", password: "12345", role: "STUDENT", tenantId: "default", isActive: true, createdAt: new Date().toISOString() },
   ],
   classes: [
@@ -745,7 +830,8 @@ export async function dbFindUserById(id: string): Promise<any | null> {
       const res = await db.select().from(schema.users).where(eq(schema.users.id, id));
       return res[0] || null;
     },
-    () => readLocalDb().users.find(x => x.id === id) || null
+    () => readLocalDb().users.find(x => x.id === id) || null,
+    true
   );
 }
 
@@ -756,7 +842,8 @@ export async function dbFindUserByEmail(email: string): Promise<any | null> {
       const res = await db.select().from(schema.users).where(eq(schema.users.email, emailLower));
       return res[0] || null;
     },
-    () => readLocalDb().users.find(x => x.email.toLowerCase() === emailLower) || null
+    () => readLocalDb().users.find(x => x.email.toLowerCase() === emailLower) || null,
+    true
   );
 }
 
@@ -777,7 +864,8 @@ export async function dbFindUserByEmailAndTenant(email: string, tenantId: string
     () => readLocalDb().users.find(x => 
       x.email.toLowerCase() === emailLower && 
       (x.tenantId === tenantId || x.tenant_id === tenantId)
-    ) || null
+    ) || null,
+    true
   );
 }
 
@@ -1652,7 +1740,8 @@ export async function dbGetTenants(): Promise<any[]> {
         seen.add(t.id);
         return true;
       });
-    }
+    },
+    true
   );
 }
 
@@ -1666,7 +1755,8 @@ export async function dbGetTenantById(id: string): Promise<any | null> {
       const dbData = readLocalDb();
       if (!dbData.tenants) dbData.tenants = [];
       return dbData.tenants.find(t => t.id === id) || null;
-    }
+    },
+    true
   );
 }
 
@@ -1680,7 +1770,8 @@ export async function dbGetTenantBySubdomain(subdomain: string): Promise<any | n
       const dbData = readLocalDb();
       if (!dbData.tenants) dbData.tenants = [];
       return dbData.tenants.find(t => t.subdomain.toLowerCase() === subdomain.toLowerCase()) || null;
-    }
+    },
+    true
   );
 }
 
